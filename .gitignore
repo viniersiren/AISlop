@@ -1,2 +1,7 @@
 client_secrets.json
-clipCreation.py
+input.mkv
+output.mp4
+models/
+clips/
+get-pip.py
+myenv/
