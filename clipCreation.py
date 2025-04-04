@@ -70,28 +70,29 @@ def transcribe_audio(audio_file):
 
 def create_fast_cuts(video_file):
     print("0")
-    clip = VideoFileClip(video_file)
+    clip = VideoFileClip(video_file, fps_source='fps')
+
     print("1")
     subclips = []
     new_clip_length = clip.duration  # Get actual duration of the extracted clip
-    print(new_clip_length + "new clip")
     segment_length = new_clip_length / CUTS_PER_CLIP  # Use float division
-    print(segment_length + "seglegnth")
     for i in range(CUTS_PER_CLIP):
         start = i * segment_length
         end = start + segment_length
-        subclip = clip.subclip(start, end)
-
+        subclip = clip.subclipped(start, end)
+        
         # Apply zoom effect randomly
         if random.random() > 0.5:
-            subclip = subclip.fx(vfx.resize, ZOOM_FACTOR).fx(
-                vfx.crop, 
-                x_center=subclip.w / 2, 
-                y_center=subclip.h / 2, 
-                width=subclip.w / ZOOM_FACTOR, 
-                height=subclip.h / ZOOM_FACTOR
-            )
-
+            subclip = subclip.with_effects([
+                vfx.Resize(ZOOM_FACTOR),
+                vfx.Crop(
+                    x_center=subclip.w / 2,
+                    y_center=subclip.h / 2,
+                    width=subclip.w / ZOOM_FACTOR,
+                    height=subclip.h / ZOOM_FACTOR
+                )
+            ])
+        
         subclips.append(subclip)
 
     # Apply crossfade transitions
@@ -144,49 +145,33 @@ def upload_to_youtube(video_file, title, description):
     response = request.execute()
     print("Uploaded to YouTube:", response["id"])
 
-# MAIN SCRIPT
-def get_unique_filename(base_filename):
-    # Start with the base filename and check if it exists
-    i = 0
-    while os.path.exists(base_filename):
-        # Increment i and check again until a unique filename is found
-        i += 1
-        base_filename = f"{base_filename.rsplit('.', 1)[0]}_{i}.mp4"  # Append the index before the extension
-    return base_filename
-
-if __name__ == "__main__":
-    # Generate only one clip
-    start_time = random.randint(0, 3600)  # Random time within the first hour
-    
-    # Check if clip_0.mp4 exists, then clip_1.mp4, and so on until we find a unique filename
+def generate_unique_filename(folder, prefix, extension):
     i = 0
     while True:
-        clip_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}.mp4")
-        if not os.path.exists(clip_file):  # If the file doesn't exist, break out of the loop
-            break
+        filename = os.path.join(folder, f"{prefix}_{i}.{extension}")
+        if not os.path.exists(filename):
+            return filename
         i += 1
 
-    processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
-    while os.path.exists(processed_file):  # Ensure processed file also has a unique name
-        i += 1
-        processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
+if __name__ == "__main__":
+    start_time = random.randint(0, 3600)
+    clip_file = generate_unique_filename(OUTPUT_FOLDER, "clip", "mp4")
 
-    print(f"Extracting clip {i+1}...")
+    print(f"Extracting clip...")
     extract_clip(MOVIE_FILE, start_time, clip_file)
-
+      
     print("Generating captions...")
-    #captions = transcribe_audio(clip_file)
+    # captions = transcribe_audio(clip_file)
 
     print("Applying AI editing...")
     fast_cut_clip = create_fast_cuts(clip_file)
-    #captioned_clip = add_captions(fast_cut_clip, captions)
-    print("before muzax")
-    final_clip = add_music(fast_cut_clip, MUSIC_FILE)
+    # captioned_clip = add_captions(fast_cut_clip, captions)
+    # final_clip = add_music(fast_cut_clip, MUSIC_FILE)
 
     print("Saving final video...")
-    final_clip.write_videofile(processed_file, codec="libx264", fps=24)
+    fast_cut_clip.write_videofile(clip_file, codec="libx264", fps=24)
 
     print("Uploading to YouTube...")
-    upload_to_youtube(processed_file, f"AI-Generated Clip {i+1}", "Automatically generated movie/show clip")
-    
+    upload_to_youtube(clip_file, "AI-Generated Clip", "Automatically generated movie/show clip")
+
     print("Clip processed and uploaded!")
