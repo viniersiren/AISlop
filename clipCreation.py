@@ -4,11 +4,20 @@ import json
 import random
 import wave
 import subprocess
-#from moviepy.editor import *
+from moviepy import (
+    VideoFileClip, 
+    TextClip, 
+    CompositeVideoClip, 
+    concatenate_videoclips, 
+    vfx, 
+    AudioFileClip,
+    CompositeAudioClip
+)
 from vosk import Model, KaldiRecognizer
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+import tempfile
 
 
 # CONFIGURATION
@@ -32,40 +41,85 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # Function to extract a random clip
 def extract_clip(movie_file, start_time, output_file):
-    # Generate a random clip length between MIN_CLIP_LENGTH and MAX_CLIP_LENGTH
-    clip_length = random.randint(MIN_CLIP_LENGTH, MAX_CLIP_LENGTH)
-
-    # Convert start_time (in seconds) to HH:MM:SS format
-    hours = start_time // 3600
-    minutes = (start_time % 3600) // 60
-    seconds = start_time % 60
-    start_time_formatted = f"{hours:02}:{minutes:02}:{seconds:02}"
-
-    # Convert clip_length to HH:MM:SS format
-    clip_hours = clip_length // 3600
-    clip_minutes = (clip_length % 3600) // 60
-    clip_seconds = clip_length % 60
-    clip_length_formatted = f"{clip_hours:02}:{clip_minutes:02}:{clip_seconds:02}"
-
+    # First get video duration
+    probe_cmd = [
+        'ffprobe', '-v', 'error', '-show_entries',
+        'format=duration', '-of',
+        'default=noprint_wrappers=1:nokey=1', movie_file
+    ]
+    
     try:
-        # Construct the ffmpeg command with quoted paths and formatted clip length
-        cmd = f'ffmpeg -i "{movie_file}" -ss {start_time_formatted} -to {clip_length_formatted} -c:v libx264 -c:a aac -y "{output_file}"'
-
-        # Run the command and capture any errors
-        subprocess.run(cmd, shell=True, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-        print(f"Clip extracted successfully to {output_file}")
-
-    except subprocess.CalledProcessError as e:
-        print(f"Error extracting clip: {e.stderr.decode()}")
-    except ValueError as ve:
-        print(f"Invalid time format: {ve}")
+        duration = float(subprocess.check_output(probe_cmd))
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"Error getting duration: {str(e)}")
+        return
+
+    # Generate valid clip parameters
+    max_possible_start = duration - MIN_CLIP_LENGTH
+    if max_possible_start < 0:
+        raise ValueError("Source video is too short")
+        
+    start_time = random.uniform(0, max_possible_start)
+    clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
+
+    # Use proper FFmpeg command with duration (-t) instead of end time (-to)
+    cmd = [
+        'ffmpeg', '-y',
+        '-ss', str(start_time),
+        '-i', movie_file,
+        '-t', str(clip_length),
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-map_chapters', '-1',  # Remove chapters
+        '-map_metadata', '-1',  # Remove metadata
+        output_file
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        print(f"Clip extracted: {output_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg failed: {e.stderr.decode()}")
 
 # Function to transcribe using Vosk
-def transcribe_audio(audio_file):
+def transcribe_audio(video_file):
+    print("TRANSCRIBING")
+    probe_cmd = [
+        'ffprobe', '-v', 'error', '-select_streams', 'a',
+        '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', video_file
+    ]
+    
+    try:
+        has_audio = subprocess.check_output(probe_cmd).decode().strip() == 'audio'
+    except subprocess.CalledProcessError:
+        has_audio = False
+
+    if not has_audio:
+        print("Warning: No audio track found in video")
+        return "[No speech detected]", []
+
+    # Extract audio to temporary WAV file
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+        convert_cmd = [
+            'ffmpeg', '-y', '-i', video_file,
+            '-vn', '-acodec', 'pcm_s16le',
+            '-ar', '16000', '-ac', '1',
+            temp_audio.name
+        ]
+        
+        try:
+            subprocess.run(convert_cmd, check=True, 
+                          stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        except subprocess.CalledProcessError as e:
+            print(f"Audio conversion failed: {e.stderr.decode()}")
+            return "[Audio extraction failed]", []
+
+    # Transcribe from temporary WAV file
     model = Model(VOSK_MODEL_PATH)
-    wf = wave.open(audio_file, "rb")
+    wf = wave.open(temp_audio.name, 'rb')
+    
+    # Clean up temporary file immediately
+    os.unlink(temp_audio.name)
     rec = KaldiRecognizer(model, wf.getframerate())
     rec.SetWords(True)
 
@@ -103,7 +157,7 @@ def create_fast_cuts(video_file):
         if end > new_clip_length:
             end = new_clip_length
 
-        subclip = clip.subclip(start, end)
+        subclip = clip.subclipped(start, end)
 
         # Apply zoom effect randomly with more variations
         if random.random() > 0.3:  # 70% chance of applying zoom
@@ -111,7 +165,7 @@ def create_fast_cuts(video_file):
             if random.random() > 0.5:
                 zoom_factor = 1 / zoom_factor  # Zoom out
 
-            subclip = subclip.fx(
+            subclip = clip.subclipped.fx(
                 vfx.resize, zoom_factor
             ).fx(
                 vfx.crop,
