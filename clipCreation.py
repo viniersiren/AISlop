@@ -10,9 +10,12 @@ from moviepy import (
     CompositeVideoClip, 
     concatenate_videoclips, 
     vfx, 
+    afx,
     AudioFileClip,
-    CompositeAudioClip
+    CompositeAudioClip,
+    ColorClip
 )
+
 from vosk import Model, KaldiRecognizer
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,14 +25,14 @@ import tempfile
 
 # CONFIGURATION
 MOVIE_FILE = "output.mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 10  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 40  # Maximum clip length in seconds
+MIN_CLIP_LENGTH = 45  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 80  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
 ZOOM_FACTOR = 1.2  # How much to zoom (1.2 = 20% zoom)
 TRANSITION_DURATION = 0.5  # Seconds of smooth transition between cuts
-MUSIC_FILE = "royalty_free_music.mp3"  # Background music (royalty-free)
+MUSIC_FILE = "timeless galaxy.mp3"  # Background music (royalty-free)
 MUSIC_VOLUME = 0.2  # Adjust background music volume (0.0 - 1.0)
 VOSK_MODEL_PATH = "models/vosk-model-en-us-0.22"
 OUTPUT_FOLDER = "clips/"
@@ -60,7 +63,8 @@ def extract_clip(movie_file, start_time, output_file):
         raise ValueError("Source video is too short")
         
     start_time = random.uniform(0, max_possible_start)
-    clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
+    #clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
+    clip_length = 7
 
     # Use proper FFmpeg command with duration (-t) instead of end time (-to)
     cmd = [
@@ -84,6 +88,8 @@ def extract_clip(movie_file, start_time, output_file):
 # Function to transcribe using Vosk
 def transcribe_audio(video_file):
     print("TRANSCRIBING")
+
+    # Check for audio
     probe_cmd = [
         'ffprobe', '-v', 'error', '-select_streams', 'a',
         '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', video_file
@@ -117,26 +123,47 @@ def transcribe_audio(video_file):
     # Transcribe from temporary WAV file
     model = Model(VOSK_MODEL_PATH)
     wf = wave.open(temp_audio.name, 'rb')
-    
-    # Clean up temporary file immediately
     os.unlink(temp_audio.name)
+    
     rec = KaldiRecognizer(model, wf.getframerate())
     rec.SetWords(True)
 
-    captions = ""
+    captions = []
+    timings = []
+
     while True:
         data = wf.readframes(4000)
         if len(data) == 0:
             break
         if rec.AcceptWaveform(data):
             result = json.loads(rec.Result())
-            words = result["text"].split()
-            for word in words:
-                if random.random() < CURSE_PROBABILITY:  # 5% chance of inserting a curse word
-                    captions += "[BLEEP] "
-                else:
-                    captions += word + " "
-    return captions.strip()
+            if 'result' in result:
+                for word_info in result['result']:
+                    word = word_info['word']
+                    start = word_info['start']
+                    end = word_info['end']
+
+                    if random.random() < CURSE_PROBABILITY:
+                        captions.append("shit")
+                    else:
+                        captions.append(word)
+                    timings.append((start, end))
+
+    # Process final result
+    final_result = json.loads(rec.FinalResult())
+    if 'result' in final_result:
+        for word_info in final_result['result']:
+            word = word_info['word']
+            start = word_info['start']
+            end = word_info['end']
+
+            if random.random() < CURSE_PROBABILITY:
+                captions.append("[SHIT]")
+            else:
+                captions.append(word)
+            timings.append((start, end))
+
+    return " ".join(captions), timings
 
 def create_fast_cuts(video_file):
     print("Creating fast cuts...")
@@ -149,52 +176,147 @@ def create_fast_cuts(video_file):
     max_cuts = 10
     num_cuts = random.randint(min_cuts, max_cuts)
 
-    # Generate random start and end times for each subclip
     for _ in range(num_cuts):
-        start = random.uniform(0, new_clip_length - 0.5)  # Ensure at least 0.5 seconds for each clip
-        end = start + random.uniform(0.5, 1.5)  # Subclips between 0.5 and 1.5 seconds
+        start = random.uniform(0, new_clip_length - 0.5)
+        end = start + random.uniform(0.5, 1.5)
+        end = min(end, new_clip_length)
 
-        if end > new_clip_length:
-            end = new_clip_length
-
+        # Get subclip using legacy syntax
         subclip = clip.subclipped(start, end)
 
-        # Apply zoom effect randomly with more variations
-        if random.random() > 0.3:  # 70% chance of applying zoom
-            zoom_factor = random.uniform(1.1, 1.5)  # Zoom between 10% and 50%
+        if random.random() > 0.3:
+            zoom_factor = random.uniform(1.1, 1.5)
             if random.random() > 0.5:
-                zoom_factor = 1 / zoom_factor  # Zoom out
+                zoom_factor = 1 / zoom_factor
 
-            subclip = clip.subclipped.fx(
-                vfx.resize, zoom_factor
-            ).fx(
-                vfx.crop,
-                x_center=subclip.w / 2,
-                y_center=subclip.h / 2,
-                width=subclip.w / zoom_factor,
-                height=subclip.h / zoom_factor,
-            )
+            # Legacy-compatible resize and crop
+            original_w, original_h = subclip.size
+            new_w = int(original_w * zoom_factor)
+            new_h = int(original_h * zoom_factor)
+            
+            # Resize first
+            resized = subclip.resized((new_w, new_h))
+            
+            # Then crop using direct vfx call
+            # cropped = vfx.Crop(
+            #     resized,
+            #     x1=(new_w - original_w)//2,
+            #     y1=(new_h - original_h)//2,
+            #     x2=(new_w + original_w)//2,
+            #     y2=(new_h + original_h)//2
+            # )
+            
+            # subclip = cropped
 
         subclips.append(subclip)
 
-    # Apply crossfade transitions
-    final_clip = concatenate_videoclips(subclips, method="compose", padding=-TRANSITION_DURATION)
+    # Use legacy concatenation method
+    final_clip = concatenate_videoclips(subclips, 
+                                      padding=-TRANSITION_DURATION)
     return final_clip
 
-# Function to add captions to video
-def add_captions(video, captions):
-    txt_clip = TextClip(captions, fontsize=24, color='white', size=(video.w * 0.8, None), method='caption')
-    txt_clip = txt_clip.set_position(("center", "bottom")).set_duration(video.duration)
-    return CompositeVideoClip([video, txt_clip])
+def add_captions(video, captions, timings):
+    # Debug: Print input parameters
+    print(f"Adding captions to video. Captions count: {len(captions.split())}, Timings count: {len(timings)}")
+    
+    if isinstance(video, str):
+        print(f"Loading video from file: {video}")
+        video = VideoFileClip(video)
+    
+    width, height = video.size
+    print(f"Video dimensions: {width}x{height}, Duration: {video.duration}s")
+
+    clips = [video]
+    
+    # Create caption background
+    caption_bg = ColorClip(
+        size=(width, 100),
+        color=(0, 0, 0),
+        duration=video.duration
+    ).with_opacity(0.7).with_position(("center", height-100))
+    #clips.append(caption_bg)
+    print("Created caption background")
+
+    words = captions.split()
+    
+    # Debug: Verify alignment
+    if len(words) != len(timings):
+        print(f"ERROR: Mismatched captions ({len(words)}) and timings ({len(timings)})")
+        return video  # Fallback to original video
+
+    for i, (word, (start, end)) in enumerate(zip(words, timings)):
+        try:
+            # Debug: Print current word info
+            print(f"Processing word {i+1}/{len(words)}: '{word}' ({start:.2f}-{end:.2f}s)")
+            
+            if word == "[BLEEP]":  # Changed from [SHIT] to match transcription
+                # Create censor bar
+                txt = TextClip(
+                    text="▓"*random.randint(3, 6),
+                    font="./premadeTest/shortfarm/fonts/font.ttf",
+                    font_size=60,
+                    color='red',
+                    stroke_color='black',
+                    stroke_width=1
+                )
+                print(f"Created censor bar for bleep at {start:.2f}s")
+            else:
+                # Create normal text
+                txt = TextClip(
+                    text=word,
+                    font="./premadeTest/shortfarm/fonts/font.ttf",
+                    font_size=60,
+                    color='white',
+                    stroke_color='black',
+                    stroke_width=1
+                )
+                txt.save_frame("debug_frame.png") 
+                print(f"Created text clip for '{word}'")
+
+            # Calculate position with slight randomness
+            y_pos = height  + random.randint(-5, 5)
+            print(f"Positioning at y={y_pos}")
+
+            # Set clip properties
+            txt = txt.with_start(start)\
+                    .with_end(end)\
+                    .with_position(("center", y_pos))\
+                    #.crossfadein(0.1)\
+                    #.crossfadeout(0.1)
+            
+            clips.append(txt)
+        
+        except Exception as e:
+            print(f"Error processing word '{word}': {str(e)}")
+            continue
+
+    print(f"Created {len(clips)-2} text clips")  # Subtract video and background
+    
+    try:
+        final_clip = CompositeVideoClip(clips)  # Use ALL clips
+        print("Successfully composed video with captions")
+        return final_clip
+    except Exception as e:
+        print(f"Error composing video: {str(e)}")
+        return video
 
 def add_music(video, music_file):
-    music = AudioFileClip(music_file).volumex(MUSIC_VOLUME).set_duration(video.duration)
+    # Load music and adjust volume
+    music = AudioFileClip(music_file)
+    
+    music.with_effects([afx.MultiplyVolume(0.001)])
+    
+    # Set music duration to match video
+    music = music.with_duration(video.duration)
+    
+    # Mix audio tracks
+    if video.audio:
+        combined_audio = CompositeAudioClip([video.audio, music])
+    else:
+        combined_audio = music
+        
+    return video.with_audio(combined_audio)
 
-    audio_clip = video.audio
-
-    if audio_clip is None:
-        audio_clip = music
-    return video.set_audio(audio_clip)
 
 def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
     """Adds bleep sounds to the video where [BLEEP] is found in captions."""
@@ -217,7 +339,7 @@ def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
             if i == location :
                 
                 
-                bleep_clip = bleep_sound.set_start(start_time)
+                bleep_clip = bleep_sound.with_start(start_time)
                 audio_clips.append(bleep_clip)
             try:
                 start_time += len(word) / 5 #approx word time in secs
@@ -227,7 +349,7 @@ def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
     final_audio = CompositeAudioClip(audio_clips)
     
     # Set the final audio to the video clip
-    return video.set_audio(final_audio)
+    return video.with_audio(final_audio)
 
 # Function to upload to YouTube
 def upload_to_youtube(video_file, title, description):
@@ -275,8 +397,10 @@ def get_unique_filename(base_filename):
 
 if __name__ == "__main__":
     # Generate only one clip
-    start_time = random.randint(0, 3600)  # Random time within the first hour
+    start_time = random.randint(0, 1200)  # Random time within the first hour
 
+   
+    #create_fast_cuts("clips/clip_26.mp4")
     # Check if clip_0.mp4 exists, then clip_1.mp4, and so on until we find a unique filename
     i = 0
     while True:
@@ -293,13 +417,20 @@ if __name__ == "__main__":
     print(f"Extracting clip {i+1}...")
     extract_clip(MOVIE_FILE, start_time, clip_file)
 
-
+    #clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
     print("did it save????")
-    captions = transcribe_audio(clip_file)
+    captions, timings = transcribe_audio(clip_file)
+    
+    # transcription_file = os.path.join(OUTPUT_FOLDER, "clip_54_transcription.json")
+    # with open(transcription_file, 'r') as f:
+    #     transcription_data = json.load(f)
+    # captions = transcription_data['captions']
+    # timings = transcription_data['timings']
 
-    print("Applying AI editing...")
-    fast_cut_clip = create_fast_cuts(clip_file)
-    captioned_clip = add_captions(fast_cut_clip, captions)
+    # clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
+    print("adding caption...")
+    #fast_cut_clip = create_fast_cuts(clip_file)
+    captioned_clip = add_captions(clip_file, captions, timings)
 
     print("adding bleep sounds...")
     final_clip = add_bleeps(captioned_clip,captions)
@@ -307,9 +438,14 @@ if __name__ == "__main__":
     print("before muzax")
     final_clip = add_music(final_clip, MUSIC_FILE)
     print("Saving final video...")
-    final_clip.write_videofile(processed_file, codec="libx264", fps=24)
+    final_clip.write_videofile(processed_file, codec="libx264")
 
     print("Uploading to YouTube...")
     #upload_to_youtube(processed_file, f"AI-Generated Clip {i+1}", "Automatically generated movie/show clip")
 
     print("Clip processed and uploaded!")
+
+
+
+    #music = AudioFileClip(music_file)
+    #music.with_effects([afx.MultiplyVolume(0.5)])
