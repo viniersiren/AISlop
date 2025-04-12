@@ -63,8 +63,8 @@ def extract_clip(movie_file, start_time, output_file):
         raise ValueError("Source video is too short")
         
     start_time = random.uniform(0, max_possible_start)
-    #clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
-    clip_length = 7
+    clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
+    #clip_length = 30
 
     # Use proper FFmpeg command with duration (-t) instead of end time (-to)
     cmd = [
@@ -144,7 +144,7 @@ def transcribe_audio(video_file):
                     end = word_info['end']
 
                     if random.random() < CURSE_PROBABILITY:
-                        captions.append("shit")
+                        captions.append(random.choice(CURSE_WORDS))
                     else:
                         captions.append(word)
                     timings.append((start, end))
@@ -158,7 +158,7 @@ def transcribe_audio(video_file):
             end = word_info['end']
 
             if random.random() < CURSE_PROBABILITY:
-                captions.append("[SHIT]")
+                captions.append(random.choice(CURSE_WORDS))
             else:
                 captions.append(word)
             timings.append((start, end))
@@ -227,87 +227,89 @@ def add_captions(video, captions, timings):
     print(f"Video dimensions: {width}x{height}, Duration: {video.duration}s")
 
     clips = [video]
-    
-    # Create caption background
-    caption_bg = ColorClip(
-        size=(width, 100),
-        color=(0, 0, 0),
-        duration=video.duration
-    ).with_opacity(0.7).with_position(("center", height-100))
-    #clips.append(caption_bg)
-    print("Created caption background")
+    y_base = height - 350  # Starting Y position for captions
+    print(y_base)
+    y_increment = 0  # Vertical space between sections
+    current_y = y_base
+    current_section = []
+    current_timings = []
 
-    words = captions.split()
-    
-    # Debug: Verify alignment
-    if len(words) != len(timings):
-        print(f"ERROR: Mismatched captions ({len(words)}) and timings ({len(timings)})")
-        return video  # Fallback to original video
-
-    for i, (word, (start, end)) in enumerate(zip(words, timings)):
-        try:
-            # Debug: Print current word info
-            print(f"Processing word {i+1}/{len(words)}: '{word}' ({start:.2f}-{end:.2f}s)")
-            
-            if word == "[BLEEP]":  # Changed from [SHIT] to match transcription
-                # Create censor bar
-                txt = TextClip(
-                    text="▓"*random.randint(3, 6),
-                    font="./premadeTest/shortfarm/fonts/font.ttf",
-                    font_size=60,
-                    color='red',
-                    stroke_color='black',
-                    stroke_width=1
-                )
-                print(f"Created censor bar for bleep at {start:.2f}s")
-            else:
-                # Create normal text
-                txt = TextClip(
-                    text=word,
-                    font="./premadeTest/shortfarm/fonts/font.ttf",
-                    font_size=60,
-                    color='white',
-                    stroke_color='black',
-                    stroke_width=1
-                )
-                txt.save_frame("debug_frame.png") 
-                print(f"Created text clip for '{word}'")
-
-            # Calculate position with slight randomness
-            y_pos = height  + random.randint(-5, 5)
-            print(f"Positioning at y={y_pos}")
-
-            # Set clip properties
-            txt = txt.with_start(start)\
-                    .with_end(end)\
-                    .with_position(("center", y_pos))\
-                    #.crossfadein(0.1)\
-                    #.crossfadeout(0.1)
-            
-            clips.append(txt)
+    # Group words into sections of 3-5 words
+    for i, (word, (start, end)) in enumerate(zip(captions.split(), timings)):
+        current_section.append(word)
+        current_timings.append((start, end))
         
-        except Exception as e:
-            print(f"Error processing word '{word}': {str(e)}")
-            continue
+        # Start new section when we reach 3 words or find natural break
+        if len(current_section) >= 4 or (word.endswith('.') or word.endswith(',')):
+            print('decided to start a new section')
+            create_section(clips, current_section, current_timings, current_y, width)
+            current_y -= y_increment
+            current_section = []
+            current_timings = []
 
-    print(f"Created {len(clips)-2} text clips")  # Subtract video and background
+    # Add remaining words in final section
+    if current_section:
+        create_section(clips, current_section, current_timings, current_y, width)
+
+    print(f"Created {len(clips)-1} text sections")  # Subtract base video
     
     try:
-        final_clip = CompositeVideoClip(clips)  # Use ALL clips
-        print("Successfully composed video with captions")
+        final_clip = CompositeVideoClip(clips)
+        print("Successfully composed video with caption sections")
         return final_clip
     except Exception as e:
         print(f"Error composing video: {str(e)}")
         return video
 
+def create_section(clips, words, timings, y_pos, screen_width):
+    """Helper to create a multi-word text section"""
+    try:
+        # Combine words and handle bleeps
+        section_text = []
+        for word in words:
+            if word == "[BLEEP]":
+                #section_text.append("▓"*random.randint(4, 5))
+                print('used to cover the bleep')
+            else:
+                section_text.append(word)
+                
+        section_str = " ".join(section_text)
+        
+        # Calculate section timing
+        start_time = timings[0][0]
+        end_time = timings[-1][1]
+        
+        # Create text clip with automatic wrapping
+        txt = TextClip(
+            text=section_str,
+            font="./premadeTest/shortfarm/fonts/font.ttf",
+            font_size=60,
+            color='white',
+            stroke_color='black',
+            stroke_width=1,
+            size=(int(screen_width*0.9), None),  # Allow wrapping
+            method='caption'  # Auto-wrap text
+        ).with_position(("center", y_pos))\
+         .with_start(start_time)\
+         .with_end(end_time)
+
+        # Debug test
+        clips.append(txt)
+        print(f"Created section: {section_str} ({start_time:.1f}-{end_time:.1f}s)")
+
+    except Exception as e:
+        print(f"Error creating section: {str(e)}")
+
 def add_music(video, music_file):
     # Load music and adjust volume
     music = AudioFileClip(music_file)
     
-    music.with_effects([afx.MultiplyVolume(0.001)])
+    music = music.with_effects([afx.MultiplyVolume(0.1)])
     
     # Set music duration to match video
     music = music.with_duration(video.duration)
+
+    videoAud1 = video.audio.with_effects([afx.MultiplyVolume(2.0)])
     
     # Mix audio tracks
     if video.audio:
@@ -321,11 +323,12 @@ def add_music(video, music_file):
 def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
     """Adds bleep sounds to the video where [BLEEP] is found in captions."""
     bleep_sound = AudioFileClip(bleep_file)
+    bleep_sound = AudioFileClip(bleep_file).subclipped(0, 0.25)
     bleep_duration = bleep_sound.duration
     audio = video.audio
     
     # Find bleep locations based on the captions
-    bleep_locations = [i for i, word in enumerate(captions.split()) if word == "[BLEEP]"]
+    bleep_locations = [i for i, word in enumerate(captions.split()) if word in CURSE_WORDS or word == "[BLEEP]"]
     
     # Create a list of audio clips to be composited
     audio_clips = [audio]
@@ -335,16 +338,14 @@ def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
         start_time = 0
         
         for i, word in enumerate(captions.split()):
-            
-            if i == location :
-                
-                
-                bleep_clip = bleep_sound.with_start(start_time)
-                audio_clips.append(bleep_clip)
-            try:
-                start_time += len(word) / 5 #approx word time in secs
-            except:
-                start_time += bleep_duration
+            print('d')
+            # if i == location :
+            #     bleep_clip = bleep_sound.with_start(start_time)
+            #     audio_clips.append(bleep_clip)
+            # try:
+            #     start_time += len(word) / 5 #approx word time in secs
+            # except:
+            #     start_time += bleep_duration
                 
     final_audio = CompositeAudioClip(audio_clips)
     
