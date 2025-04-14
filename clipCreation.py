@@ -4,6 +4,7 @@ import json
 import random
 import wave
 import subprocess
+import numpy as np
 from moviepy import (
     VideoFileClip, 
     TextClip, 
@@ -13,7 +14,9 @@ from moviepy import (
     afx,
     AudioFileClip,
     CompositeAudioClip,
-    ColorClip
+    ColorClip,
+    fadein,
+    fadeout
 )
 
 from vosk import Model, KaldiRecognizer
@@ -262,40 +265,85 @@ def add_captions(video, captions, timings):
         return video
 
 def create_section(clips, words, timings, y_pos, screen_width):
-    """Helper to create a multi-word text section"""
+    """Create animated text sections with glow and effects"""
     try:
         # Combine words and handle bleeps
         section_text = []
         for word in words:
             if word == "[BLEEP]":
-                #section_text.append("▓"*random.randint(4, 5))
-                print('used to cover the bleep')
+                section_text.append("▓"*random.randint(4, 5))
             else:
                 section_text.append(word)
                 
         section_str = " ".join(section_text)
         
-        # Calculate section timing
+        # Timing calculations
         start_time = timings[0][0]
         end_time = timings[-1][1]
-        
-        # Create text clip with automatic wrapping
-        txt = TextClip(
+        duration = end_time - start_time
+
+        # GLOW LAYER (background effect)
+        glow = TextClip(
+            text=section_str,
+            font="./premadeTest/shortfarm/fonts/font.ttf",
+            font_size=65,  # Slightly larger for glow
+            color='#ff450020',  # Orange-red with low opacity
+            stroke_color='#ff450010',
+            stroke_width=12,
+            kerning=-2,
+            size=(int(screen_width*0.9), None),
+            method='caption',
+            align='center'
+        ).with_position(("center", y_pos-5))
+
+        # SHADOW LAYER (depth effect)
+        shadow = TextClip(
+            text=section_str,
+            font="./premadeTest/shortfarm/fonts/font.ttf",
+            font_size=60,
+            color='black',
+            stroke_color='black',
+            stroke_width=8,
+            kerning=-1,
+            size=(int(screen_width*0.9), None),
+            method='caption',
+            align='center'
+        ).with_position(("center", y_pos+3))
+
+        # MAIN TEXT LAYER
+        text = TextClip(
             text=section_str,
             font="./premadeTest/shortfarm/fonts/font.ttf",
             font_size=60,
             color='white',
-            stroke_color='black',
-            stroke_width=1,
-            size=(int(screen_width*0.9), None),  # Allow wrapping
-            method='caption'  # Auto-wrap text
-        ).with_position(("center", y_pos))\
-         .with_start(start_time)\
-         .with_end(end_time)
+            stroke_color='#8b0000',  # Dark red
+            stroke_width=4,
+            kerning=-1,
+            size=(int(screen_width*0.9), None),
+            method='caption',
+            align='center'
+        ).with_position(("center", y_pos))
 
-        # Debug test
-        clips.append(txt)
-        print(f"Created section: {section_str} ({start_time:.1f}-{end_time:.1f}s)")
+        # COMBINE LAYERS
+        txt_group = CompositeVideoClip([glow, shadow, text])
+
+        # ANIMATION EFFECTS
+        txt_group = (txt_group
+            .fx(vfx.shear, lambda t: 0.3 + 0.1*np.sin(t))  # Dynamic slant
+            .fx(vfx.colorx, 1.3)  # Boost contrast
+            .fx(fadein, 0.3)  # Quick fade in
+            .fx(fadeout, 0.3)  # Quick fade out
+            .with_position(lambda t: (
+                "center", 
+                y_pos + 3*np.sin(2*t)  # Subtle bounce
+            ))
+        )
+
+        # SET TIMING AND ADD TO CLIPS
+        txt_group = txt_group.with_start(start_time).with_end(end_time)
+        clips.append(txt_group)
+
+        print(f"Created animated section: {section_str[:30]}...")
 
     except Exception as e:
         print(f"Error creating section: {str(e)}")
