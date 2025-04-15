@@ -1,10 +1,12 @@
-
 import os
 import json
 import random
 import wave
 import subprocess
 import numpy as np
+import sys
+import traceback
+
 from moviepy import (
     VideoFileClip, 
     TextClip, 
@@ -15,8 +17,7 @@ from moviepy import (
     AudioFileClip,
     CompositeAudioClip,
     ColorClip,
-    fadein,
-    fadeout
+    
 )
 
 from vosk import Model, KaldiRecognizer
@@ -28,8 +29,8 @@ import tempfile
 
 # CONFIGURATION
 MOVIE_FILE = "output.mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 45  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 80  # Maximum clip length in seconds
+MIN_CLIP_LENGTH = 30  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 70  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
@@ -46,7 +47,7 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
 # Function to extract a random clip
-def extract_clip(movie_file, start_time, output_file):
+def extract_clip(movie_file, output_file, start_time=None):  # Modified to accept optional start_time
     # First get video duration
     probe_cmd = [
         'ffprobe', '-v', 'error', '-show_entries',
@@ -65,7 +66,12 @@ def extract_clip(movie_file, start_time, output_file):
     if max_possible_start < 0:
         raise ValueError("Source video is too short")
         
-    start_time = random.uniform(0, max_possible_start)
+    # If start_time is not provided, generate random
+    if start_time is None:
+        start_time = random.uniform(0, max_possible_start)
+    else:  # Clamp to valid range
+        start_time = max(0, min(start_time, max_possible_start))
+    
     clip_length = random.randint(MIN_CLIP_LENGTH, min(MAX_CLIP_LENGTH, duration - start_time))
     #clip_length = 30
 
@@ -169,54 +175,206 @@ def transcribe_audio(video_file):
     return " ".join(captions), timings
 
 def create_fast_cuts(video_file):
-    print("Creating fast cuts...")
-    clip = VideoFileClip(video_file)
-    subclips = []
-    new_clip_length = clip.duration
+    print("\n=== Starting create_fast_cuts ===")
+    print(f"Input file: {video_file}")
+    
+    try:
+        clip = VideoFileClip(video_file)
+        original_duration = clip.duration
+        print(f"[DEBUG] Original clip loaded successfully")
+        print(f"[DEBUG] Original duration: {original_duration:.2f}s")
+        print(f"[DEBUG] Original dimensions: {clip.w}x{clip.h}")
+        print(f"[DEBUG] Original FPS: {clip.fps}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load video file: {str(e)}")
+        raise
 
-    # Increase the number of cuts and make them more random
-    min_cuts = 5
-    max_cuts = 10
-    num_cuts = random.randint(min_cuts, max_cuts)
+    # Constants (make sure these are defined in your code)
+    TRANSITION_DURATION = 0.5  # Added for safety, ensure this exists in your code
+    SILENCE_THRESHOLD = 0.025
+    CHUNK_DURATION = 0.1
 
-    for _ in range(num_cuts):
-        start = random.uniform(0, new_clip_length - 0.5)
-        end = start + random.uniform(0.5, 1.5)
-        end = min(end, new_clip_length)
-
-        # Get subclip using legacy syntax
-        subclip = clip.subclipped(start, end)
-
-        if random.random() > 0.3:
-            zoom_factor = random.uniform(1.1, 1.5)
-            if random.random() > 0.5:
-                zoom_factor = 1 / zoom_factor
-
-            # Legacy-compatible resize and crop
-            original_w, original_h = subclip.size
-            new_w = int(original_w * zoom_factor)
-            new_h = int(original_h * zoom_factor)
+    def detect_silent_intervals(clip, threshold=SILENCE_THRESHOLD, chunk_duration=CHUNK_DURATION):
+        """Identify silent periods using audio analysis."""
+        print("\n=== Detecting silent intervals ===")
+        try:
+            print(f"[DEBUG] Starting audio analysis...")
+            print(f"[DEBUG] Threshold: {threshold}, Chunk duration: {chunk_duration}")
             
-            # Resize first
-            resized = subclip.resized((new_w, new_h))
+            audio = clip.audio.to_soundarray(fps=22050)
+            print(f"[DEBUG] Audio array shape: {audio.shape}")
             
-            # Then crop using direct vfx call
-            # cropped = vfx.Crop(
-            #     resized,
-            #     x1=(new_w - original_w)//2,
-            #     y1=(new_h - original_h)//2,
-            #     x2=(new_w + original_w)//2,
-            #     y2=(new_h + original_h)//2
-            # )
+            if len(audio.shape) > 1:
+                print(f"[DEBUG] Converting stereo to mono")
+                audio = audio.mean(axis=1)
+                
+            sample_rate = 22050
+            chunk_size = int(chunk_duration * sample_rate)
+            num_chunks = len(audio) // chunk_size
+            print(f"[DEBUG] Total chunks: {num_chunks} ({num_chunks * chunk_duration:.2f}s)")
+
+            silent_intervals = []
+            current_silence_start = None
+            silence_counter = 0
+
+            for i in range(num_chunks):
+                chunk = audio[i*chunk_size:(i+1)*chunk_size]
+                rms = np.sqrt(np.mean(chunk**2))
+                
+                if rms < threshold:
+                    silence_counter += 1
+                    if current_silence_start is None:
+                        current_silence_start = i * chunk_duration
+                else:
+                    if current_silence_start is not None:
+                        silent_intervals.append((
+                            max(0, current_silence_start - 0.5),
+                            min(clip.duration, i * chunk_duration + 0.5)
+                        ))
+                        current_silence_start = None
+
+            # Add final silence if needed
+            if current_silence_start is not None:
+                silent_intervals.append((
+                    max(0, current_silence_start - 0.5),
+                    min(clip.duration, num_chunks * chunk_duration + 0.5)
+                ))
+
+            print(f"[DEBUG] Found {len(silent_intervals)} silent intervals")
+            print(f"[DEBUG] Total silence duration: {sum(end-start for start,end in silent_intervals):.2f}s")
+            print(f"[DEBUG] Silent intervals: {silent_intervals}")
+            return silent_intervals
             
-            # subclip = cropped
+        except Exception as e:
+            print(f"[ERROR] Audio analysis failed: {str(e)}")
+            traceback.print_exc()
+            return []
 
-        subclips.append(subclip)
+    def split_active_segments(clip, silent_intervals):
+        """Create subclips from non-silent portions."""
+        print("\n=== Splitting active segments ===")
+        try:
+            active_segments = []
+            last_end = 0
+            
+            print(f"[DEBUG] Processing {len(silent_intervals)} silent intervals")
+            for idx, (start, end) in enumerate(sorted(silent_intervals)):
+                print(f"[DEBUG] Interval {idx+1}: {start:.2f}-{end:.2f}")
+                if start > last_end:
+                    seg = (last_end, start)
+                    active_segments.append(seg)
+                    print(f"[DEBUG] Added active segment {len(active_segments)}: {seg[0]:.2f}-{seg[1]:.2f}")
+                last_end = end
+                
+            if last_end < clip.duration:
+                final_seg = (last_end, clip.duration)
+                active_segments.append(final_seg)
+                print(f"[DEBUG] Added final segment: {final_seg[0]:.2f}-{final_seg[1]:.2f}")
 
-    # Use legacy concatenation method
-    final_clip = concatenate_videoclips(subclips, 
-                                      padding=-TRANSITION_DURATION)
-    return final_clip
+            total_active = sum(end-start for start,end in active_segments)
+            print(f"[DEBUG] Total active duration: {total_active:.2f}s")
+            print(f"[DEBUG] Number of active segments: {len(active_segments)}")
+            return [clip.subclipped(start, end) for start, end in active_segments]
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to split segments: {str(e)}")
+            traceback.print_exc()
+            return []
+
+    def create_zoom_effect(segment):
+        """Apply smooth variable zoom to a segment."""
+        try:
+            print(f"\n[DEBUG] Creating zoom effect for {segment.duration:.2f}s segment")
+            duration = segment.duration
+            zoom_points = [
+                random.uniform(0.9, 1.2),
+                random.uniform(0.9, 1.2),
+                random.uniform(0.9, 1.2)
+            ]
+            print(f"[DEBUG] Zoom points: {zoom_points}")
+            
+            zoom_func = lambda t: np.interp(t, [0, duration/2, duration], zoom_points)
+            
+            print("[DEBUG] Applying resize effect...")
+            resized = segment.fx(vfx.resize, zoom_func)
+            
+            print("[DEBUG] Applying crop...")
+            return resized.fx(
+                lambda gf, t: gf(t)[
+                    int((gf(t).shape[0] - clip.h)/2):int((gf(t).shape[0] + clip.h)/2),
+                    int((gf(t).shape[1] - clip.w)/2):int((gf(t).shape[1] + clip.w)/2)
+                ]
+            )
+        except Exception as e:
+            print(f"[ERROR] Zoom effect failed: {str(e)}")
+            traceback.print_exc()
+            return segment
+
+    # Main processing pipeline
+    print("\n=== Processing pipeline starts ===")
+    try:
+        silent_intervals = detect_silent_intervals(clip)
+        active_segments = split_active_segments(clip, silent_intervals)
+        
+        if not active_segments:
+            print("[WARNING] No active segments found! Returning original clip")
+            print(f"[DEBUG] Final duration: {clip.duration:.2f}s")
+            return clip
+
+        print(f"\n=== Processing {len(active_segments)} segments ===")
+        processed_segments = []
+        for idx, seg in enumerate(active_segments):
+            try:
+                print(f"\n[DEBUG] Processing segment {idx+1}/{len(active_segments)}")
+                print(f"[DEBUG] Segment duration: {seg.duration:.2f}s")
+                print(f"[DEBUG] Segment dimensions: {seg.w}x{seg.h}")
+                
+                # Apply zoom effect
+                zoomed = create_zoom_effect(seg)
+                print(f"[DEBUG] After zoom: {zoomed.duration:.2f}s")
+                
+                # Add speed variation
+                speed = random.choice([0.95, 1.0, 1.05])
+                print(f"[DEBUG] Applying speed factor: {speed}")
+                sped_up = zoomed.fx(vfx.speedx, speed)
+                print(f"[DEBUG] After speed change: {sped_up.duration:.2f}s")
+                
+                processed_segments.append(sped_up)
+                print(f"[DEBUG] Segment {idx+1} processing complete")
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to process segment {idx+1}: {str(e)}")
+                traceback.print_exc()
+                processed_segments.append(seg)
+
+        print("\n=== Concatenating segments ===")
+        print(f"[DEBUG] Number of segments to concatenate: {len(processed_segments)}")
+        total_processed_duration = sum(s.duration for s in processed_segments)
+        print(f"[DEBUG] Total raw duration: {total_processed_duration:.2f}s")
+        
+        final_clip = concatenate_videoclips(
+            processed_segments,
+            padding=-TRANSITION_DURATION,
+            method="compose",
+            transition=CompositeVideoClip.dissolve
+        )
+        
+        print("\n=== Final clip details ===")
+        print(f"[DEBUG] Final duration: {final_clip.duration:.2f}s")
+        print(f"[DEBUG] Final dimensions: {final_clip.w}x{final_clip.h}")
+        print(f"[DEBUG] Final FPS: {final_clip.fps}")
+        
+        # Validation check
+        if final_clip.duration <= 0:
+            raise ValueError("Invalid final duration - processing failed")
+            
+        return final_clip
+
+    except Exception as e:
+        print(f"[CRITICAL] Processing pipeline failed: {str(e)}")
+        traceback.print_exc()
+        print("[WARNING] Returning original clip as fallback")
+        return clip
 
 def add_captions(video, captions, timings):
     # Debug: Print input parameters
@@ -231,7 +389,7 @@ def add_captions(video, captions, timings):
 
     clips = [video]
     y_base = height - 350  # Starting Y position for captions
-    print(y_base)
+    #print(y_base)
     y_increment = 0  # Vertical space between sections
     current_y = y_base
     current_section = []
@@ -265,103 +423,91 @@ def add_captions(video, captions, timings):
         return video
 
 def create_section(clips, words, timings, y_pos, screen_width):
-    """Create animated text sections with glow and effects"""
+    """Helper to create a multi-word text section"""
     try:
         # Combine words and handle bleeps
         section_text = []
         for word in words:
             if word == "[BLEEP]":
-                section_text.append("▓"*random.randint(4, 5))
+                #section_text.append("▓"*random.randint(4, 5))
+                print('used to cover the bleep')
             else:
                 section_text.append(word)
                 
         section_str = " ".join(section_text)
         
-        # Timing calculations
+        # Calculate section timing
         start_time = timings[0][0]
         end_time = timings[-1][1]
-        duration = end_time - start_time
-
-        # GLOW LAYER (background effect)
-        glow = TextClip(
-            text=section_str,
-            font="./premadeTest/shortfarm/fonts/font.ttf",
-            font_size=65,  # Slightly larger for glow
-            color='#ff450020',  # Orange-red with low opacity
-            stroke_color='#ff450010',
-            stroke_width=12,
-            kerning=-2,
-            size=(int(screen_width*0.9), None),
-            method='caption',
-            align='center'
-        ).with_position(("center", y_pos-5))
-
-        # SHADOW LAYER (depth effect)
-        shadow = TextClip(
-            text=section_str,
-            font="./premadeTest/shortfarm/fonts/font.ttf",
-            font_size=60,
-            color='black',
-            stroke_color='black',
-            stroke_width=8,
-            kerning=-1,
-            size=(int(screen_width*0.9), None),
-            method='caption',
-            align='center'
-        ).with_position(("center", y_pos+3))
-
-        # MAIN TEXT LAYER
-        text = TextClip(
+        
+        # Create text clip with automatic wrapping
+        txt = TextClip(
             text=section_str,
             font="./premadeTest/shortfarm/fonts/font.ttf",
             font_size=60,
             color='white',
-            stroke_color='#8b0000',  # Dark red
-            stroke_width=4,
-            kerning=-1,
-            size=(int(screen_width*0.9), None),
-            method='caption',
-            align='center'
-        ).with_position(("center", y_pos))
+            stroke_color='black',
+            stroke_width=1,
+            size=(int(screen_width*0.9), None),  # Allow wrapping
+            method='caption'  # Auto-wrap text
+        ).with_position(("center", y_pos))\
+         .with_start(start_time)\
+         .with_end(end_time)
+        
+        # glow = (txt
+        #         .with_effects([(color, {"factor": 1.6})])
+        #         .resize(1.03)  # slightly enlarges the clip for a glow bleed
+        #         .with_opacity(0.2))
 
-        # COMBINE LAYERS
-        txt_group = CompositeVideoClip([glow, shadow, text])
+        # Create a shadow layer: lower opacity and offset its position.
+    #     shadow = txt.with_opacity(0.4).with_position(("center", y_pos + 3)) 
 
-        # ANIMATION EFFECTS
-        txt_group = (txt_group
-            .fx(vfx.shear, lambda t: 0.3 + 0.1*np.sin(t))  # Dynamic slant
-            .fx(vfx.colorx, 1.3)  # Boost contrast
-            .fx(fadein, 0.3)  # Quick fade in
-            .fx(fadeout, 0.3)  # Quick fade out
-            .with_position(lambda t: (
-                "center", 
-                y_pos + 3*np.sin(2*t)  # Subtle bounce
-            ))
-        )
+        #txt = vfx.Rotate(lambda t: 5 * np.sin(t), txt)
 
-        # SET TIMING AND ADD TO CLIPS
-        txt_group = txt_group.with_start(start_time).with_end(end_time)
-        clips.append(txt_group)
+    #     txt_group = CompositeVideoClip([glow, shadow, r]) #meant to have glow as the first arg
 
-        print(f"Created animated section: {section_str[:30]}...")
+    #    # txt_group = txt_group.rotate(lambda t: 5 * np.sin(t))
+
+
+        # Boost contrast
+        #txt = vfx.colorx(txt, 1.3)
+
+        # Apply quick fade in and fade out effects
+        #txt = txt.fadein(0.3)
+        #txt = txt.fadeout(0.3)
+
+        # Set dynamic position with a subtle vertical bounce
+        # txt = txt.set_position(lambda t: (
+        #     "center", 
+        #     y_pos
+        # ))
+        clips.append(txt)
+        print(f"Created section: {section_str} ({start_time:.1f}-{end_time:.1f}s)")
 
     except Exception as e:
         print(f"Error creating section: {str(e)}")
+
+def get_random_music_file():
+    music_folder = "./music"
+    music_files = [f for f in os.listdir(music_folder) if f.endswith(".mp3")]
+    if not music_files:
+        raise Exception("No .mp3 files found in the music folder.")
+    return os.path.join(music_folder, random.choice(music_files))
 
 def add_music(video, music_file):
     # Load music and adjust volume
     music = AudioFileClip(music_file)
     
-    music = music.with_effects([afx.MultiplyVolume(0.1)])
+    music = music.with_effects([afx.MultiplyVolume(0.03)])
     
     # Set music duration to match video
     music = music.with_duration(video.duration)
 
-    videoAud1 = video.audio.with_effects([afx.MultiplyVolume(2.0)])
+    videoAud1 = video.audio.with_effects([afx.MultiplyVolume(1.3)])
     
     # Mix audio tracks
     if video.audio:
-        combined_audio = CompositeAudioClip([video.audio, music])
+        combined_audio = CompositeAudioClip([videoAud1, music])
     else:
         combined_audio = music
         
@@ -385,8 +531,8 @@ def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
     for location in bleep_locations:
         start_time = 0
         
-        for i, word in enumerate(captions.split()):
-            print('d')
+       # for i, word in enumerate(captions.split()):
+        #    print('')
             # if i == location :
             #     bleep_clip = bleep_sound.with_start(start_time)
             #     audio_clips.append(bleep_clip)
@@ -445,56 +591,107 @@ def get_unique_filename(base_filename):
 
 
 if __name__ == "__main__":
-    # Generate only one clip
-    start_time = random.randint(0, 1200)  # Random time within the first hour
-
-   
-    #create_fast_cuts("clips/clip_26.mp4")
-    # Check if clip_0.mp4 exists, then clip_1.mp4, and so on until we find a unique filename
-    i = 0
-    while True:
-        clip_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}.mp4")
-        if not os.path.exists(clip_file):  # If the file doesn't exist, break out of the loop
-            break
-        i += 1
-
-    processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
-    while os.path.exists(processed_file):  # Ensure processed file also has a unique name
-        i += 1
-        processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
-
-    print(f"Extracting clip {i+1}...")
-    extract_clip(MOVIE_FILE, start_time, clip_file)
-
-    #clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
-    print("did it save????")
-    captions, timings = transcribe_audio(clip_file)
+    if len(sys.argv) > 1 and sys.argv[1] == '3':
+        # Mass production mode
+        mass_folder = os.path.join(OUTPUT_FOLDER, "mass_produced")
+        os.makedirs(mass_folder, exist_ok=True)
+        
+        # Get source duration
+        probe_cmd = [
+            'ffprobe', '-v', 'error', '-show_entries',
+            'format=duration', '-of',
+            'default=noprint_wrappers=1:nokey=1', MOVIE_FILE
+        ]
+        duration = float(subprocess.check_output(probe_cmd))
+        end_time = duration - 120  # Last 2 minutes
+        
+        start_time = 2.0  # Start from 15 seconds
+        clip_idx = 1
+        
+        while start_time + MIN_CLIP_LENGTH <= end_time:
+            # Generate clip
+            clip_path = os.path.join(mass_folder, f"{clip_idx}.mp4")
+            processed_path = os.path.join(mass_folder, f"{clip_idx}_final.mp4")
+            
+            # Extract clip with defined start time
+            extract_clip(MOVIE_FILE, clip_path, start_time)
+            
+            print('doing fast cuts')
+            dynamic_clip = create_fast_cuts(clip_path)
+            # Process clip
+            print('transcribing audio')
+            captions, timings = transcribe_audio(clip_path)
+            
+            captioned_clip = add_captions(dynamic_clip, captions, timings)
+            bleeped_clip = add_bleeps(captioned_clip, captions)
+            final_clip = add_music(bleeped_clip, get_random_music_file())
+            
+            # Save result
+            final_clip.write_videofile(processed_path, codec="libx264")
+            
+            # Move to next segment
+            with VideoFileClip(clip_path) as clip:
+                used_duration = clip.duration
+            start_time += used_duration
+            clip_idx += 1
+            
+        print(f"Mass produced {clip_idx-1} clips!")
+    else:
+        # Generate only one clip
+        print('got here')
+        start_time = random.uniform(0.0, 1200.0)  # Random float between 0.0 and 1200.0 seconds  
     
-    # transcription_file = os.path.join(OUTPUT_FOLDER, "clip_54_transcription.json")
-    # with open(transcription_file, 'r') as f:
-    #     transcription_data = json.load(f)
-    # captions = transcription_data['captions']
-    # timings = transcription_data['timings']
+        #create_fast_cuts("clips/clip_26.mp4")
+        # Check if clip_0.mp4 exists, then clip_1.mp4, and so on until we find a unique filename
+        i = 0
+        while True:
+            clip_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}.mp4")
+            if not os.path.exists(clip_file):  # If the file doesn't exist, break out of the loop
+                break
+            i += 1
 
-    # clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
-    print("adding caption...")
-    #fast_cut_clip = create_fast_cuts(clip_file)
-    captioned_clip = add_captions(clip_file, captions, timings)
+        processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
+        while os.path.exists(processed_file):  # Ensure processed file also has a unique name
+            i += 1
+            processed_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_processed.mp4")
 
-    print("adding bleep sounds...")
-    final_clip = add_bleeps(captioned_clip,captions)
+        print(f"Extracting clip {i+1}...")
+        extract_clip(MOVIE_FILE, clip_file, start_time)
 
-    print("before muzax")
-    final_clip = add_music(final_clip, MUSIC_FILE)
-    print("Saving final video...")
-    final_clip.write_videofile(processed_file, codec="libx264")
+        #clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
+        print("did it save????")
+        captions, timings = transcribe_audio(clip_file)
+        
+        # transcription_file = os.path.join(OUTPUT_FOLDER, "clip_54_transcription.json")
+        # with open(transcription_file, 'r') as f:
+        #     transcription_data = json.load(f)
+        # captions = transcription_data['captions']
+        # timings = transcription_data['timings']
 
-    print("Uploading to YouTube...")
-    #upload_to_youtube(processed_file, f"AI-Generated Clip {i+1}", "Automatically generated movie/show clip")
+        #clip_file = os.path.join(OUTPUT_FOLDER, "clip_54.mp4")
+        
+        print('creating fast cuts')
 
-    print("Clip processed and uploaded!")
+        fast_cut_clip = create_fast_cuts(clip_file)
+
+        print("adding caption...")
+        captioned_clip = add_captions(fast_cut_clip, captions, timings)
+
+        print("adding bleep sounds...")
+        final_clip = add_bleeps(captioned_clip,captions)
+
+        print("before muzax")
+        Music_file = get_random_music_file()
+        final_clip = add_music(final_clip, Music_file)
+        print("Saving final video...")
+        final_clip.write_videofile(processed_file, codec="libx264")
+
+        print("Uploading to YouTube...")
+        #upload_to_youtube(processed_file, f"AI-Generated Clip {i+1}", "Automatically generated movie/show clip")
+
+        print("Clip processed and uploaded!")
 
 
 
-    #music = AudioFileClip(music_file)
-    #music.with_effects([afx.MultiplyVolume(0.5)])
+        #music = AudioFileClip(music_file)
+        #music.with_effects([afx.MultiplyVolume(0.5)])
