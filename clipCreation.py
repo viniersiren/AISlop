@@ -29,8 +29,8 @@ import tempfile
 
 # CONFIGURATION
 MOVIE_FILE = "output.mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 30  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 70  # Maximum clip length in seconds
+MIN_CLIP_LENGTH = 10  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 60  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
@@ -152,10 +152,10 @@ def transcribe_audio(video_file):
                     start = word_info['start']
                     end = word_info['end']
 
-                    if random.random() < CURSE_PROBABILITY:
-                        captions.append(random.choice(CURSE_WORDS))
-                    else:
-                        captions.append(word)
+                    # if random.random() < CURSE_PROBABILITY:
+                    #     captions.append(random.choice(CURSE_WORDS))
+                    # else:
+                    captions.append(word)
                     timings.append((start, end))
 
     # Process final result
@@ -166,10 +166,10 @@ def transcribe_audio(video_file):
             start = word_info['start']
             end = word_info['end']
 
-            if random.random() < CURSE_PROBABILITY:
-                captions.append(random.choice(CURSE_WORDS))
-            else:
-                captions.append(word)
+            #if random.random() < CURSE_PROBABILITY:
+             #   captions.append(random.choice(CURSE_WORDS))
+            #else:
+            captions.append(word)
             timings.append((start, end))
 
     return " ".join(captions), timings
@@ -605,8 +605,8 @@ if __name__ == "__main__":
         duration = float(subprocess.check_output(probe_cmd))
         end_time = duration - 120  # Last 2 minutes
         
-        start_time = 2.0  # Start from 15 seconds
-        clip_idx = 1
+        start_time = 455.0 
+        clip_idx = 10
         
         while start_time + MIN_CLIP_LENGTH <= end_time:
             # Generate clip
@@ -623,8 +623,8 @@ if __name__ == "__main__":
             captions, timings = transcribe_audio(clip_path)
             
             captioned_clip = add_captions(dynamic_clip, captions, timings)
-            bleeped_clip = add_bleeps(captioned_clip, captions)
-            final_clip = add_music(bleeped_clip, get_random_music_file())
+            #bleeped_clip = add_bleeps(captioned_clip, captions)
+            final_clip = add_music(captioned_clip, get_random_music_file())
             
             # Save result
             final_clip.write_videofile(processed_path, codec="libx264")
@@ -678,7 +678,7 @@ if __name__ == "__main__":
         captioned_clip = add_captions(fast_cut_clip, captions, timings)
 
         print("adding bleep sounds...")
-        final_clip = add_bleeps(captioned_clip,captions)
+        final_clip = captioned_clip #add_bleeps(captioned_clip,captions)
 
         print("before muzax")
         Music_file = get_random_music_file()

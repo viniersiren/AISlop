@@ -12,8 +12,20 @@ from googleapiclient.http import MediaFileUpload
 
 # Static configuration
 SHORT_METADATA = {
-    "title": "🦇 What We Do in the Shadows | Short Clip | {timestamp}",
-    "description": "Highlight from *What We Do in the Shadows* 🧛‍♂️\n#Shorts ENJOY, LIKE COMMENT",
+    "title": f"(Part 13): Legendary Moments: What We Do in the Shadows | Best Scenes Compilation Short",
+
+
+    "description": f"""Dive into the darkly hilarious world of *What We Do in the Shadows*! Part 13 of our special series features:
+
+- Vladislav's brooding yet comical moments
+- Nadja's seductive mischief and fierce spirit
+- Laszlo's eccentric antics and outrageous charm
+- Colin Robinson's deadpan encounters with mortals
+
+"Remember, we may be undead, but we’re eternally fabulous!" 
+
+#Shorts #Short #WhatWeDoInTheShadows #WWDITS #VampireComedy #DarkHumor #SitcomHorror #UndeadLife
+""",
     "tags": [
         "whatwedointheshadows", "wwdits", "movieshorts", "filmclips",
         "moviemoments", "editing", "vampirecomedy", "short", "shorts"
