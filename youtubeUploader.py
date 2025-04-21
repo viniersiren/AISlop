@@ -12,36 +12,49 @@ from googleapiclient.http import MediaFileUpload
 
 # Static configuration
 SHORT_METADATA = {
-    "title": f"(Part 13): Legendary Moments: What We Do in the Shadows | Best Scenes Compilation Short",
+    "title": " Insider Trading in *What We Do in the Shadows* | Vampire Finance Short 📈🧛",
 
+    "description": """Welcome to *What We Do in the Shadows* – where vampires dabble in... insider trading?
 
-    "description": f"""Dive into the darkly hilarious world of *What We Do in the Shadows*! Part 13 of our special series features:
+- Nandor learns about Wall Street (sort of)
+- Laszlo thinks “insider” means something *very* different
+- Colin Robinson gives a thrilling lecture on SEC regulations
 
-- Vladislav's brooding yet comical moments
-- Nadja's seductive mischief and fierce spirit
-- Laszlo's eccentric antics and outrageous charm
-- Colin Robinson's deadpan encounters with mortals
+📉 Vampires and the stock market? What could go wrong.
 
-"Remember, we may be undead, but we’re eternally fabulous!" 
-
-#Shorts #Short #WhatWeDoInTheShadows #WWDITS #VampireComedy #DarkHumor #SitcomHorror #UndeadLife
+#WWDITS #WhatWeDoInTheShadows #ComedyShorts #VampireHumor #InsiderTrading #FinanceParody #Mockumentary #Shorts #SitcomFinance
 """,
+
     "tags": [
-        "whatwedointheshadows", "wwdits", "movieshorts", "filmclips",
-        "moviemoments", "editing", "vampirecomedy", "short", "shorts"
+        "whatwedointheshadows", "wwdits", "shorts", "vampirecomedy",
+        "sitcomfinance", "insidertrading", "mockumentary", "tvparody", "funnyclips"
     ],
     "category": "24"  # Entertainment
 }
 
+
 VIDEO_METADATA = {
-    "title": "🦇 What We Do in the Shadows |  | {timestamp}",
-    "description": "Eedited compilation of hilarious moments from *What We Do in the Shadows* 🧛‍♀️\n\nCreated by our advanced video processing system.\n#WWDITS #Shorts",
+    "title": "📈 Insider Trading Gets Undead in *What We Do in the Shadows* | Vampire Finance – Part 21 | {timestamp}",
+
+    "description": """*What We Do in the Shadows* tackles... financial crimes?
+
+Nandor and Laszlo try to get rich quick with “insider trading,” but their vampire logic might not hold up in court. Colin Robinson, of course, thrives.
+
+AI-edited for maximum mockumentary madness and financial chaos.
+
+#WWDITS #WhatWeDoInTheShadows #VampireFinance #ComedyShorts #MockumentaryMadness #InsiderTradingParody #SitcomHumor #TVClips #AIClips
+""",
+
     "tags": [
-        "whatwedointheshadows", "wwdits", "movietime", "filmclips", "aigenerated",
-        "moviecompilation", "automatedediting", "vampirehumor"
+        "whatwedointheshadows", "wwdits", "insidertrading", "vampiresitcom",
+        "financecomedy", "mockumentary", "tvhumor", "sitcomclips", "aivideo"
     ],
     "category": "24"
 }
+
+
+
+
 
 
 def ensure_vertical_video(input_path, output_path, target_aspect_ratio=9/16):

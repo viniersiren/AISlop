@@ -19,7 +19,7 @@ from moviepy import (
 
 # Constants
 TRANSITION_DURATION = 0.5  # seconds
-SILENCE_THRESHOLD = 0.015 #.25 is too much, .01 is too little with chunk duration of 0.1
+SILENCE_THRESHOLD = 0.23 #.25 is too much, .01 is too little with chunk duration of 0.1
 CHUNK_DURATION = 0.3
 
 
@@ -32,7 +32,11 @@ def detect_silent_intervals(clip, threshold=SILENCE_THRESHOLD, chunk_duration=CH
         sample_rate = 22050
         chunk_size = int(chunk_duration * sample_rate)
         num_chunks = len(audio) // chunk_size
-
+        print('HEREHERE')
+        
+        global_rms = np.sqrt((audio**2).mean())
+        print(global_rms)
+        threshold = global_rms * SILENCE_THRESHOLD
         silent_intervals = []
         current_start = None
 
@@ -138,27 +142,35 @@ def create_fast_cuts(video_file):
 
 
 
+
 if __name__ == "__main__":
-    print(dir(vfx))
-    input_file = "./clips/mass_produced/19_final.mp4"
+    input_file = "./clips/mass_produced/27_final.mp4"
     if not os.path.isfile(input_file):
-        print(f"Input file not found: {input_file}")
+        print(f"[ERROR] Input file not found: {input_file}")
         sys.exit(1)
 
     result = create_fast_cuts(input_file)
+    print(f"[MAIN] create_fast_cuts returned clip: duration={result.duration}, audio={result.audio}")
 
-    # Export first 30 seconds
-    duration = min(4, result.duration)
-    #preview = result.subclipped(0, duration)
-    preview = result.subclipped(0, duration).with_audio(result.audio.subclipped(0, duration))
+    # Preview first few seconds
+    # duration = min(4, result.duration)
+    # preview = result.subclipped(0, duration)
+    # if result.audio:
+    #     preview = preview.with_audio(result.audio.subclipped(0, duration))
+    # else:
+    #     print('no audio')
+    # print(f"[MAIN] Preview clip: duration={preview.duration}, audio={preview.audio}")
 
-    output_file = "fast_cuts_30s.mp4"
-    preview.write_videofile(
+    output_file = "fast27_cuts_preview.mp4"
+    # turn on verbose logging to see ffmpeg audio steps
+    result.write_videofile(
         output_file,
         codec="libx264",
         audio_codec="aac",
         temp_audiofile="temp-audio.m4a",
         remove_temp=True,
-        audio=True  
+        audio=True,
+        #verbose=True,
+        logger="bar"
     )
-    print(f"Saved preview: {output_file}")
+    print(f"[MAIN] Saved preview: {output_file}")
