@@ -101,7 +101,7 @@ def ensure_vertical_video(input_path, output_path, target_aspect_ratio=9/16):
     return output_path
 
 
-def upload_to_youtube(video_file, title, description, thumbnail_path=None):  # Made thumbnail optional
+def upload_to_youtube(video_file, title, description, tags, thumbnail_path=None):  # Made thumbnail optional
     SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
     creds = None
     if os.path.exists("token.json"):
@@ -119,7 +119,7 @@ def upload_to_youtube(video_file, title, description, thumbnail_path=None):  # M
         "snippet": {
             "title": title,
             "description": description,
-            "tags": ["AI", "movie clips", "automation"],
+            "tags": tags,
             "categoryId": "24",
         },
         "status": {
@@ -155,18 +155,17 @@ def upload_to_youtube(video_file, title, description, thumbnail_path=None):  # M
         print(f"Upload failed: {str(upload_error)}")
         return None
 
-def upload_to_youtube_single(video_file, is_short=True):
+def upload_to_youtube_single(video_file, metadata_file, is_short=True):
     """Handle YouTube upload with metadata configuration"""
-    metadata = SHORT_METADATA if is_short else VIDEO_METADATA
+
+    with open(metadata_file, 'r') as mf:
+        metadata = json.load(mf)
+
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    
-    # Format metadata
-    title = metadata["title"].format(timestamp=timestamp)
-    description = metadata["description"]
-    tags = metadata["tags"]
-    
-    #thumbnail = metadata["thumbnail"]
-    category = metadata["category"]
+    title = metadata['title'].format(timestamp=timestamp)
+    description = metadata['description']
+    tags = metadata.get('tags', [])
+    category = metadata.get('category', '24')
 
     # Authentication flow
     creds = None
@@ -205,19 +204,6 @@ def upload_to_youtube_single(video_file, is_short=True):
         
         print(f"Uploaded video ID: {response['id']}")
         
-        # Add thumbnail if available
-        # if os.path.exists(thumbnail):
-        #     try:
-        #         time.sleep(10)  # Wait for YouTube processing
-        #         youtube.thumbnails().set(
-        #             videoId=response["id"],
-        #             media_body=MediaFileUpload(thumbnail, mimetype='image/jpeg')
-        #         ).execute()
-        #         print("Thumbnail uploaded successfully")
-        #     except Exception as e:
-        #         print(f"Thumbnail error: {str(e)}")
-        # else:
-        #     print(f"No thumbnail found at {thumbnail}")
         
         return response['id']
     
@@ -227,22 +213,20 @@ def upload_to_youtube_single(video_file, is_short=True):
 
 def main():
     parser = argparse.ArgumentParser(description='Upload video to YouTube')
-    parser.add_argument('video_path', type=str, help='Path to video file')
-    parser.add_argument('upload_type', type=int, choices=[1, 2], 
-                      help='1 for regular video, 2 for Short')
+    parser.add_argument('video_path', help='Path to video file')
+    parser.add_argument('metadata_file', help='Path to JSON metadata file')
+    parser.add_argument('upload_type', type=int, choices=[1,2],
+                        help='1: full video, 2: YouTube Short')
     args = parser.parse_args()
 
-    # Process video if it's a short
     if args.upload_type == 2:
-        print("Processing as Short...")
-        processed_path = os.path.splitext(args.video_path)[0] + "_vertical.mp4"
-        final_video = ensure_vertical_video(args.video_path, processed_path)
+        print('Processing a short')
+        processed = os.path.splitext(args.video_path)[0] + '_vertical.mp4'
+        final_video = ensure_vertical_video(args.video_path, processed)
     else:
-        print("Processing as regular video...")
         final_video = args.video_path
 
-    # Upload with appropriate metadata
-    upload_to_youtube_single(final_video, is_short=(args.upload_type == 2))
+    upload_to_youtube_single(final_video, args.metadata_file)
 
 if __name__ == "__main__":
     SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]

@@ -6,9 +6,12 @@ import subprocess
 import numpy as np
 import sys
 import traceback
+import re
+import time
 
 from fastCuts import create_fast_cuts
 from transcribeAndCaption import add_captions, transcribe_audio
+from geminiTitleGen import generate_youtube_metadata
 
 from moviepy import (
     VideoFileClip, 
@@ -31,9 +34,9 @@ import tempfile
 
 
 # CONFIGURATION
-MOVIE_FILE = "fury.mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 10  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 55  # Maximum clip length in seconds
+MOVIE_FILE = "Fury(2014).mp4"  # Change this to your movie/show file
+MIN_CLIP_LENGTH = 25  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 75  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
@@ -110,12 +113,12 @@ def add_music(video, music_file):
     # Load music and adjust volume
     music = AudioFileClip(music_file)
     
-    music = music.with_effects([afx.MultiplyVolume(0.03)])
+    music = music.with_effects([afx.MultiplyVolume(0.02)])
     
     # Set music duration to match video
     music = music.with_duration(video.duration)
 
-    videoAud1 = video.audio.with_effects([afx.MultiplyVolume(1.3)])
+    videoAud1 = video.audio.with_effects([afx.MultiplyVolume(1.2)])
     
     # Mix audio tracks
     if video.audio:
@@ -202,12 +205,23 @@ def get_unique_filename(base_filename):
     return base_filename
 
 
+def try_generate_metadata(captions, movie_file, max_retries=5):
+    for attempt in range(max_retries):
+        try:
+            short_metadata = generate_youtube_metadata(captions, movie_file[:-4])
+            if short_metadata:  # check for valid output (adjust as needed)
+                return short_metadata
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+        time.sleep(1)  # optional delay between retries
+    raise RuntimeError("Failed to generate metadata after multiple attempts.")
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '3':
         # Mass production mode
         mass_folder = os.path.join(OUTPUT_FOLDER, "mass_produced")
         os.makedirs(mass_folder, exist_ok=True)
-        
+        print('MASS PRODUCING')
         # Get source duration
         probe_cmd = [
             'ffprobe', '-v', 'error', '-show_entries',
@@ -217,8 +231,14 @@ if __name__ == "__main__":
         duration = float(subprocess.check_output(probe_cmd))
         end_time = duration - 120  # Last 2 minutes
         
-        start_time = 455.0 
-        clip_idx = 10
+        existing_clips = [f for f in os.listdir(mass_folder) if re.fullmatch(r"\d+\.mp4", f)]
+        existing_indices = sorted([int(re.match(r"(\d+)", f).group()) for f in existing_clips])
+        if existing_indices:
+            clip_idx = existing_indices[-1] + 1
+            start_time = sum(VideoFileClip(os.path.join(mass_folder, f"{i}.mp4")).duration for i in existing_indices) + 45
+        else:
+            clip_idx = 1
+            start_time = 45.0
         
         while start_time + MIN_CLIP_LENGTH <= end_time:
             # Generate clip
@@ -237,6 +257,11 @@ if __name__ == "__main__":
             # Transcribe using the saved dynamic clip
             captions, timings = transcribe_audio(dynamic_path)
 
+            #save captions for use with gemini
+            captions_file = os.path.join(mass_folder, f"{clip_idx}_captions.txt")
+            with open(captions_file, "w") as cf:
+                cf.write(" ".join(captions))
+
             # Add captions to the dynamic clip file
             captioned_clip = add_captions(dynamic_path, captions, timings)
             #bleeped_clip = add_bleeps(captioned_clip, captions)
@@ -245,6 +270,13 @@ if __name__ == "__main__":
             # Save result
             final_clip.write_videofile(processed_path, codec="libx264")
             
+            print('generating gemini title/description/tags...')
+            short_metadata = try_generate_metadata(captions, MOVIE_FILE)
+
+            meta_file = os.path.join(mass_folder, f"{clip_idx}_short_metadata.json")
+            with open(meta_file, "w") as mf:
+                json.dump(short_metadata, mf, indent=2)
+
             # Move to next segment
             with VideoFileClip(clip_path) as clip:
                 used_duration = clip.duration
@@ -292,11 +324,16 @@ if __name__ == "__main__":
 
         # Pass the saved file path into transcribe_audio
         captions, timings = transcribe_audio(temp_fast_cut_path)
-        #captions, timings = transcribe_audio(fast_cut_clip)
+        
+        # captions_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_captions.txt")
+        # with open(captions_file, "w") as cf:
+        #     cf.write(" ".join(captions))
+
         print("adding caption...")
         captioned_clip = add_captions(fast_cut_clip, captions, timings)
 
         final_clip = captioned_clip #add_bleeps(captioned_clip,captions)
+
 
         print("before muzax")
         Music_file = get_random_music_file()
@@ -304,8 +341,11 @@ if __name__ == "__main__":
         print("Saving final video...")
         final_clip.write_videofile(processed_file, codec="libx264")
 
-
-
+        print('generating gemini title/description/tags...')
+        short_metadata = generate_youtube_metadata(captions, MOVIE_FILE[:-4])
+        meta_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_short_metadata.json")
+        with open(meta_file, "w") as mf:
+            json.dump(short_metadata, mf, indent=2)
 
 
         #music = AudioFileClip(music_file)

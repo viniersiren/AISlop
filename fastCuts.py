@@ -19,8 +19,8 @@ from moviepy import (
 
 # Constants
 TRANSITION_DURATION = 0.5  # seconds
-SILENCE_THRESHOLD = 0.23 #.25 is too much, .01 is too little with chunk duration of 0.1
-CHUNK_DURATION = 0.3
+SILENCE_THRESHOLD = 0.15 #.25 is too much, .01 is too little with chunk duration of 0.1
+CHUNK_DURATION = 0.30
 
 
 def detect_silent_intervals(clip, threshold=SILENCE_THRESHOLD, chunk_duration=CHUNK_DURATION):
