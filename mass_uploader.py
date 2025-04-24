@@ -17,7 +17,7 @@ def load_uploaded_indices(uploaded_json_path):
 
 def save_uploaded_indices(uploaded_json_path, uploaded_indices):
     with open(uploaded_json_path, "w") as f:
-        json.dump(sorted(uploaded_indices), f, indent=2)
+        json.dump(sorted(list(uploaded_indices)), f, indent=2)
 
 def main():
     parser = argparse.ArgumentParser(description='Process and upload video clips')
@@ -82,11 +82,14 @@ def main():
         upload_to_youtube(vertical_path, title, description, tags)
 
         # Update uploaded indices
-        uploaded_indices.add(idx+1)
+        uploaded_indices.add(idx)
+        print('saving')
+        print(uploaded_indices)
+        print(idx)
         save_uploaded_indices(uploaded_json_path, uploaded_indices)
-
+        print('saved')
         # Wait for a random interval between uploads (30 mins to 2 hours)
-        wait_time = random.randint(1800, 7200)
+        wait_time = random.randint(7200, 14000)
         print(f"Waiting for {wait_time // 60} minutes before next upload...")
         time.sleep(wait_time)
 

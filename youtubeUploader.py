@@ -10,51 +10,39 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Static configuration
-SHORT_METADATA = {
-    "title": " Insider Trading in *What We Do in the Shadows* | Vampire Finance Short 📈🧛",
 
-    "description": """Welcome to *What We Do in the Shadows* – where vampires dabble in... insider trading?
+from google.auth.transport.requests import Request
 
-- Nandor learns about Wall Street (sort of)
-- Laszlo thinks “insider” means something *very* different
-- Colin Robinson gives a thrilling lecture on SEC regulations
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+TOKEN_PATH = "token.json"
+CLIENT_SECRETS = "client_secrets.json"
 
-📉 Vampires and the stock market? What could go wrong.
+def load_credentials(token_path, scopes):
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, scopes)
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open(token_path, "w") as token_file:
+            token_file.write(creds.to_json())
+    return creds
 
-#WWDITS #WhatWeDoInTheShadows #ComedyShorts #VampireHumor #InsiderTrading #FinanceParody #Mockumentary #Shorts #SitcomFinance
-""",
+def authorize(token_path, scopes, client_secrets=CLIENT_SECRETS):
+    flow = InstalledAppFlow.from_client_secrets_file(client_secrets, scopes)
+    creds = flow.run_local_server(
+        port=0,
+        access_type="offline",
+        prompt="consent"
+    )
+    with open(token_path, "w") as token_file:
+        token_file.write(creds.to_json())
+    return creds
 
-    "tags": [
-        "whatwedointheshadows", "wwdits", "shorts", "vampirecomedy",
-        "sitcomfinance", "insidertrading", "mockumentary", "tvparody", "funnyclips"
-    ],
-    "category": "24"  # Entertainment
-}
-
-
-VIDEO_METADATA = {
-    "title": "📈 Insider Trading Gets Undead in *What We Do in the Shadows* | Vampire Finance – Part 21 | {timestamp}",
-
-    "description": """*What We Do in the Shadows* tackles... financial crimes?
-
-Nandor and Laszlo try to get rich quick with “insider trading,” but their vampire logic might not hold up in court. Colin Robinson, of course, thrives.
-
-AI-edited for maximum mockumentary madness and financial chaos.
-
-#WWDITS #WhatWeDoInTheShadows #VampireFinance #ComedyShorts #MockumentaryMadness #InsiderTradingParody #SitcomHumor #TVClips #AIClips
-""",
-
-    "tags": [
-        "whatwedointheshadows", "wwdits", "insidertrading", "vampiresitcom",
-        "financecomedy", "mockumentary", "tvhumor", "sitcomclips", "aivideo"
-    ],
-    "category": "24"
-}
-
-
-
-
+def get_authenticated_service():
+    creds = load_credentials(TOKEN_PATH, SCOPES)
+    if not creds or not creds.valid:
+        creds = authorize(TOKEN_PATH, SCOPES)
+    return build("youtube", "v3", credentials=creds)
 
 
 def ensure_vertical_video(input_path, output_path, target_aspect_ratio=9/16):
@@ -104,14 +92,16 @@ def ensure_vertical_video(input_path, output_path, target_aspect_ratio=9/16):
 def upload_to_youtube(video_file, title, description, tags, thumbnail_path=None):  # Made thumbnail optional
     SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
     creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    youtube = get_authenticated_service()
+
+    # if os.path.exists("token.json"):
+    #     creds = Credentials.from_authorized_user_file("token.json", SCOPES)
     
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
+    # if not creds or not creds.valid:
+    #     flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
+    #     creds = flow.run_local_server(port=0)
+    #     with open("token.json", "w") as token:
+    #         token.write(creds.to_json())
 
     youtube = build("youtube", "v3", credentials=creds)
 

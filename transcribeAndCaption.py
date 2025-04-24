@@ -114,7 +114,14 @@ def add_captions(video, captions, timings):
     print(f"Video dimensions: {width}x{height}, Duration: {video.duration}s")
 
     clips = [video]
-    y_base = height - 350  # Starting Y position for captions
+
+    ORIG_H = 808
+    ORIG_OFFSET = 350
+
+    # compute a scaled offset
+    offset_px = ORIG_OFFSET * height / ORIG_H
+    y_base = height - int(offset_px)
+    #y_base = height - 350  # Starting Y position for captions
     #print(y_base)
     y_increment = 0  # Vertical space between sections
     current_y = y_base
@@ -168,6 +175,11 @@ def create_section(clips, words, timings, y_pos, screen_width):
         # 2) Get overall section timing
         section_start = times[0][0]
         section_end = times[-1][1]
+
+        font_size = int(screen_width * 0.05)
+        print(font_size)
+            # limit each text line to 80% of video width:
+        max_w = int(screen_width * 0.8)
         
         # 3) Build TextClips (spanning section duration) so we can measure widths
         clips_info = []
@@ -177,10 +189,12 @@ def create_section(clips, words, timings, y_pos, screen_width):
             txt = TextClip(
                 text=word,
                 font="./premadeTest/shortfarm/fonts/font.ttf",
-                font_size=60,
+                font_size     = font_size, 
                 color=color,
                 stroke_color="black",
-                stroke_width=1
+                stroke_width=1,
+                margin=(0, 5),
+
             )
             clips_info.append(txt)
         
@@ -220,10 +234,12 @@ def create_section(clips, words, timings, y_pos, screen_width):
                 glow_txt = TextClip(
                     text=txt.text,
                     font="./premadeTest/shortfarm/fonts/font.ttf",
-                    font_size=60,
+                    font_size=font_size,
                     color=glow_color,
                     stroke_color="black",
-                    stroke_width=1
+                    stroke_width=1,
+                    margin=(0, 5),
+
                 )
                 # Make it slightly larger
                 glow_txt = glow_txt.resized(1.05)

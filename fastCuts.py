@@ -18,7 +18,9 @@ from moviepy import (
 )
 
 # Constants
-TRANSITION_DURATION = 0.5  # seconds
+#.006, .20
+# used to be 0.15, 0.3
+TRANSITION_DURATION = 0.31  # seconds
 SILENCE_THRESHOLD = 0.15 #.25 is too much, .01 is too little with chunk duration of 0.1
 CHUNK_DURATION = 0.30
 
@@ -37,6 +39,7 @@ def detect_silent_intervals(clip, threshold=SILENCE_THRESHOLD, chunk_duration=CH
         global_rms = np.sqrt((audio**2).mean())
         print(global_rms)
         threshold = global_rms * SILENCE_THRESHOLD
+        print(threshold)
         silent_intervals = []
         current_start = None
 

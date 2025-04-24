@@ -34,6 +34,8 @@ import tempfile
 
 
 # CONFIGURATION
+#Fury(2014).mp4
+#vietVet1.mp4
 MOVIE_FILE = "Fury(2014).mp4"  # Change this to your movie/show file
 MIN_CLIP_LENGTH = 25  # Minimum clip length in seconds
 MAX_CLIP_LENGTH = 75  # Maximum clip length in seconds
