@@ -5,7 +5,7 @@ import wave
 import subprocess
 import numpy as np
 import sys
-import traceback
+import gc
 import re
 import time
 
@@ -37,8 +37,8 @@ import tempfile
 #Fury(2014).mp4
 #vietVet1.mp4
 MOVIE_FILE = "Fury(2014).mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 25  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 75  # Maximum clip length in seconds
+MIN_CLIP_LENGTH = 5  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 10  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
@@ -163,39 +163,6 @@ def add_bleeps(video, captions, bleep_file=BLEEP_FILE):
     # Set the final audio to the video clip
     return video.with_audio(final_audio)
 
-# Function to upload to YouTube
-def upload_to_youtube(video_file, title, description):
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    youtube = build("youtube", "v3", credentials=creds)
-
-    request_body = {
-        "snippet": {
-            "title": title,
-            "description": description,
-            "tags": ["AI", "movie clips", "automation"],
-            "categoryId": "24",  # Entertainment
-        },
-        "status": {
-            "privacyStatus": "public",
-        },
-    }
-
-    media_body = open(video_file, "rb")
-    request = youtube.videos().insert(
-        part="snippet,status", body=request_body, media_body=media_body
-    )
-    response = request.execute()
-    print("Uploaded to YouTube:", response["id"])
-
-
 # MAIN SCRIPT
 def get_unique_filename(base_filename):
     # Start with the base filename and check if it exists
@@ -217,6 +184,24 @@ def try_generate_metadata(captions, movie_file, max_retries=5):
             print(f"Attempt {attempt + 1} failed: {e}")
         time.sleep(1)  # optional delay between retries
     raise RuntimeError("Failed to generate metadata after multiple attempts.")
+
+def cleanup_clip(clip):
+    """
+    Gracefully closes all readers on a MoviePy clip (video & audio),
+    deletes the reference, and forces garbage collection.
+    """
+    try:
+        clip.close()
+        if hasattr(clip, "reader"):
+            clip.reader.close()
+        if hasattr(clip, "audio") and hasattr(clip.audio, "reader"):
+            clip.audio.reader.close_proc()
+    except Exception as e:
+        print(f"Warning during clip cleanup: {e}")
+    finally:
+        # remove reference and collect
+        del clip
+        gc.collect()
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '3':
@@ -255,14 +240,17 @@ if __name__ == "__main__":
             dynamic_path = os.path.join(mass_folder, f"{clip_idx}_dynamic.mp4")
 
             dynamic_clip.write_videofile(dynamic_path, codec="libx264")
+            cleanup_clip(dynamic_clip)
 
             # Transcribe using the saved dynamic clip
             captions, timings = transcribe_audio(dynamic_path)
 
             #save captions for use with gemini
             captions_file = os.path.join(mass_folder, f"{clip_idx}_captions.txt")
-            with open(captions_file, "w") as cf:
-                cf.write(" ".join(captions))
+            with open(captions_file, "w", encoding="utf-8") as cf:
+                for caption in captions:
+                    cf.write(caption)
+
 
             # Add captions to the dynamic clip file
             captioned_clip = add_captions(dynamic_path, captions, timings)
@@ -271,11 +259,12 @@ if __name__ == "__main__":
             
             # Save result
             final_clip.write_videofile(processed_path, codec="libx264")
-            
+            cleanup_clip(final_clip)
+
             print('generating gemini title/description/tags...')
             short_metadata = try_generate_metadata(captions, MOVIE_FILE)
 
-            meta_file = os.path.join(mass_folder, f"{clip_idx}_short_metadata.json")
+            meta_file = os.path.join(mass_folder, f"{clip_idx}_short_metadata.json", metadata_dir=OUTPUT_FOLDER,)
             with open(meta_file, "w") as mf:
                 json.dump(short_metadata, mf, indent=2)
 
@@ -323,13 +312,15 @@ if __name__ == "__main__":
         fast_cut_clip = create_fast_cuts(clip_file)
         temp_fast_cut_path = os.path.join(OUTPUT_FOLDER, f"clip_{i}_fastcut.mp4")
         fast_cut_clip.write_videofile(temp_fast_cut_path, codec="libx264")
-
+        cleanup_clip(fast_cut_clip)
         # Pass the saved file path into transcribe_audio
         captions, timings = transcribe_audio(temp_fast_cut_path)
         
-        # captions_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_captions.txt")
-        # with open(captions_file, "w") as cf:
-        #     cf.write(" ".join(captions))
+        print(captions)
+        captions_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_captions.txt")
+        with open(captions_file, "w") as cf:
+            cf.write(captions)
+
 
         print("adding caption...")
         captioned_clip = add_captions(fast_cut_clip, captions, timings)
@@ -342,9 +333,12 @@ if __name__ == "__main__":
         final_clip = add_music(final_clip, Music_file)
         print("Saving final video...")
         final_clip.write_videofile(processed_file, codec="libx264")
-
+        cleanup_clip(final_clip)
         print('generating gemini title/description/tags...')
-        short_metadata = generate_youtube_metadata(captions, MOVIE_FILE[:-4])
+        
+        caption_text = " ".join(captions)  # Join captions for Gemini
+        print(caption_text)
+        short_metadata = generate_youtube_metadata(caption_text, MOVIE_FILE[:-4], metadata_dir=OUTPUT_FOLDER)
         meta_file = os.path.join(OUTPUT_FOLDER, f"clip_{i}_short_metadata.json")
         with open(meta_file, "w") as mf:
             json.dump(short_metadata, mf, indent=2)

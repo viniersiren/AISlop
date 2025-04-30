@@ -160,118 +160,124 @@ RISE_HEIGHT = 5      # how many pixels the word will rise
 RISE_DURATION = 0.3     # seconds over which the rise happens
 
 def create_section(clips, words, timings, y_pos, screen_width):
-    """Create a non-overlapping section of words with a temporary rise effect, glow, shadow, and color accents."""
+    """Create a non-overlapping section of words with bold italic font,
+    temporary rise effect, glow, shadow, and color accents, keeping before/after clips."""
     try:
-        # Constants
-        RISE_HEIGHT = 17  # Define the height words will rise
-        RISE_DURATION = 0.5  # Duration of the rise animation
-        
-        # 1) Filter bleeps
+        # Constants for animation
+        RISE_HEIGHT = 17      # pixels to rise
+        #FONT_PATH = "./premadeTest/shortfarm/fonts/font.ttf"
+        FONT_PATH = "Raleway-BoldItalic.ttf"
+        font_size = int(screen_width * 0.05)
+        PADDING = 20
+        max_w = int(screen_width * 0.8)
+
+        # Filter out bleeps
         section = [(w, t) for w, t in zip(words, timings) if w != "[BLEEP]"]
         if not section:
             return
         texts, times = zip(*section)
-        
-        # 2) Get overall section timing
         section_start = times[0][0]
         section_end = times[-1][1]
 
-        font_size = int(screen_width * 0.05)
-        print(font_size)
-            # limit each text line to 80% of video width:
-        max_w = int(screen_width * 0.8)
-        
-        # 3) Build TextClips (spanning section duration) so we can measure widths
+        # Build TextClips to measure widths
         clips_info = []
         for word in texts:
-            # bold color for long words
             color = "yellow" if len(word) > 5 else "white"
             txt = TextClip(
                 text=word,
-                font="./premadeTest/shortfarm/fonts/font.ttf",
-                font_size     = font_size, 
+                font=FONT_PATH,
+                font_size=font_size,
                 color=color,
                 stroke_color="black",
                 stroke_width=1,
                 margin=(0, 5),
-
             )
             clips_info.append(txt)
-        
-        # 4) Compute centering + padding
-        PADDING = 20
+
+        # Compute centering
         total_w = sum(txt.w for txt in clips_info) + PADDING * (len(clips_info) - 1)
         x_start = (screen_width - total_w) / 2
-        
-        # 5) For each word, create shadow, glow, and temporarily risen text
-        x = x_start
-        for i, (txt, (w_start, w_end)) in enumerate(zip(clips_info, times)):
-            # Each clip is visible for the entire section, but animations triggered at word time
-            
-            # shadow: offset + semi-transparent - visible entire time except when word is spoken
-            shadow_normal = (txt
-                     .with_position((x + 2, y_pos + 2))
-                     .with_start(section_start)
-                     .with_end(w_start)  # Only visible until the word's timing starts
-                     .with_opacity(0.5))
-                     
-            shadow_after = (txt
-                     .with_position((x + 2, y_pos + 2))
-                     .with_start(w_end)  # Visible again after word's timing ends
-                     .with_end(section_end)
-                     .with_opacity(0.5))
-            
-            # shadow for risen text - only visible during word timing
-            shadow_risen = (txt
-                     .with_position((x + 2, y_pos - RISE_HEIGHT + 2))
-                     .with_start(w_start)
-                     .with_end(w_end)
-                     .with_opacity(0.5))
-            
-            # glow: only appears when word is spoken
-            if txt.mask is None:
-                glow_color = "yellow" if txt.label.startswith("yellow") else "#aaaaff"  # Light blue glow for white text
-                glow_txt = TextClip(
-                    text=txt.text,
-                    font="./premadeTest/shortfarm/fonts/font.ttf",
-                    font_size=font_size,
-                    color=glow_color,
-                    stroke_color="black",
-                    stroke_width=1,
-                    margin=(0, 5),
 
-                )
-                # Make it slightly larger
-                glow_txt = glow_txt.resized(1.05)
-            else:
-                # Alternative fallback if the above doesn't work
-                glow_txt = txt.resized(1.05)
-                
-            glow = (glow_txt
-                   .with_position((x, y_pos - RISE_HEIGHT))  # Position glow at the risen position
-                   .with_start(w_start)
-                   .with_end(w_end)
-                   .with_opacity(0.3))
-            
-            # Regular text (default position) - visible before and after word timing
-            regular_text_before = (txt
-                          .with_position((x, y_pos))
-                          .with_start(section_start)
-                          .with_end(w_start))
-                          
-            regular_text_after = (txt
-                          .with_position((x, y_pos))
-                          .with_start(w_end)
-                          .with_end(section_end))
-            
-            # Risen text (only visible during word's time)
-            risen_text = (txt
-                        .with_position((x, y_pos - RISE_HEIGHT))
-                        .with_start(w_start)
-                        .with_end(w_end))
-            
-            clips.extend([shadow_normal, shadow_after, shadow_risen, glow, regular_text_before, regular_text_after, risen_text])
+        # Create before/after/glow/rise clips for each word
+        x = x_start
+        for txt, (w_start, w_end) in zip(clips_info, times):
+            # Shadow before spoken
+            shadow_normal = (
+                txt
+                .with_position((x + 2, y_pos + 2))
+                .with_start(section_start)
+                .with_end(w_start)
+                .with_opacity(0.5)
+            )
+            # Shadow after spoken
+            shadow_after = (
+                txt
+                .with_position((x + 2, y_pos + 2))
+                .with_start(w_end)
+                .with_end(section_end)
+                .with_opacity(0.5)
+            )
+            # Regular text before spoken
+            regular_text_before = (
+                txt
+                .with_position((x, y_pos))
+                .with_start(section_start)
+                .with_end(w_start)
+            )
+            # Regular text after spoken
+            regular_text_after = (
+                txt
+                .with_position((x, y_pos))
+                .with_start(w_end)
+                .with_end(section_end)
+            )
+            # Risen shadow during spoken
+            shadow_risen = (
+                txt
+                .with_position((x + 2, y_pos - RISE_HEIGHT + 2))
+                .with_start(w_start)
+                .with_end(w_end)
+                .with_opacity(0.5)
+            )
+            # Glow effect during spoken
+            glow_txt = TextClip(
+                text=txt.text,
+                font=FONT_PATH,
+                font_size=font_size,
+                color=txt.color,
+                stroke_color="black",
+                stroke_width=1,
+                margin=(0, 5),
+            ).resized(1.05)
+            glow = (
+                glow_txt
+                .with_position((x, y_pos - RISE_HEIGHT))
+                .with_start(w_start)
+                .with_end(w_end)
+                .with_opacity(0.3)
+            )
+            # Risen text during spoken
+            risen_text = (
+                txt
+                .with_position((x, y_pos - RISE_HEIGHT))
+                .with_start(w_start)
+                .with_end(w_end)
+            )
+
+            clips.extend([
+                shadow_normal,
+                shadow_after,
+                regular_text_before,
+                regular_text_after,
+                shadow_risen,
+                glow,
+                risen_text,
+            ])
             x += txt.w + PADDING
+
+    except Exception as e:
+        print(f"Error creating section: {e}")
+
     
     except Exception as e:
         print(f"Error creating section: {e}")
