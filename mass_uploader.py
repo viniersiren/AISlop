@@ -7,7 +7,14 @@ import subprocess
 import argparse
 from youtubeUploader import ensure_vertical_video, upload_to_youtube
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+#SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+DEFAULT_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl"
+]
+CLIENT_SECRETS_DEFAULT = "token_secrets.json"
 
 def load_uploaded_indices(uploaded_json_path):
     if os.path.exists(uploaded_json_path):
@@ -20,78 +27,71 @@ def save_uploaded_indices(uploaded_json_path, uploaded_indices):
         json.dump(sorted(list(uploaded_indices)), f, indent=2)
 
 def main():
-    parser = argparse.ArgumentParser(description='Process and upload video clips')
-    parser.add_argument('video_dir', type=str, help='Directory containing video clips')
-    parser.add_argument('--start-from', type=int, default=1, help='Index of video to start processing from (default: 1)')
-    parser.add_argument('--count', type=int, default=1, help='Number of videos to upload (default: 1)')
+    parser = argparse.ArgumentParser(description='Mass upload shorts from multiple folders')
+    parser.add_argument('--count', type=int, default=1, help='Number of videos to upload per folder')
+    parser.add_argument('--client-secrets', default=CLIENT_SECRETS_DEFAULT)
+    parser.add_argument('--scopes', nargs='+', default=DEFAULT_SCOPES)
     args = parser.parse_args()
 
-    video_files = glob.glob(os.path.join(args.video_dir, "*_final.mp4"))
-    video_files.sort(key=lambda x: int(os.path.basename(x).split('_')[0]))
+    folders = [d for d in os.listdir('.') if os.path.isdir(d) and d[0].isupper()]
 
-    uploaded_json_path = os.path.join(args.video_dir, "uploaded.json")
+    for folder in folders:
+        print(f"\nProcessing folder: {folder}")
+        # Remove 'Input' suffix if it’s already there, then re-append it
+        base_name = folder[:-5] if folder.endswith("Input") else folder #remove Input when looking into ./clips
+        clips_dir = os.path.join("clips", f"{base_name}")
+        if not os.path.isdir(clips_dir):
+            print(f"  skip, no clips dir {clips_dir}")
+            continue
 
-    uploaded_indices = load_uploaded_indices(uploaded_json_path)
+        # Now there’s an extra layer of subfolders inside, each containing videos
+        # e.g. clips/AvengersInput/SomeSubfolder/3_final.mp4
+        video_files = glob.glob(os.path.join(clips_dir, "*", "*_final.mp4"))
+        video_files.sort(key=lambda x: int(os.path.basename(x).split("_")[0]))
 
-    # Extract indices from filenames
-    available_indices = [
-        int(os.path.basename(f).split('_')[0]) for f in video_files
-    ]
-    # Filter out already uploaded indices
-    remaining_indices = list(set(available_indices) - uploaded_indices)
+        uploaded_json = os.path.join(clips_dir, "uploaded.json")
+        uploaded = load_uploaded_indices(uploaded_json)
 
-    if not remaining_indices:
-        print("No new videos to upload.")
-        return
+        available = [int(os.path.basename(f).split('_')[0]) for f in video_files]
+        remaining = list(set(available) - uploaded)
+        if not remaining:
+            print("  no new videos to upload")
+            continue
 
-    # Determine how many videos to upload
-    num_to_upload = min(args.count, len(remaining_indices))
-    selected_indices = random.sample(remaining_indices, num_to_upload)
+        to_upload = random.sample(remaining, min(args.count, len(remaining)))
+        for idx in to_upload:
+            input_mp4 = os.path.join(clips_dir, f"{idx}_final.mp4")
+            vertical_mp4 = os.path.join(clips_dir, f"{idx}_final_vertical.mp4")
+            vertical = ensure_vertical_video(input_mp4, vertical_mp4)
 
-    for idx in selected_indices:
-        input_video = os.path.join(args.video_dir, f"{idx}_final.mp4")
-        base, ext = os.path.splitext(input_video)
-        processed_video = f"{base}_vertical{ext}"
+            meta_json = os.path.join(clips_dir, f"{idx}_short_metadata.json")
+            if not os.path.exists(meta_json):
+                print(f"  missing metadata for {idx}, skip")
+                continue
 
-        vertical_path = ensure_vertical_video(input_video, processed_video)
+            with open(meta_json, 'r') as mf:
+                meta = json.load(mf)
 
-        # Generate thumbnail from processed video
-        duration_cmd = [
-            'ffprobe', '-v', 'error', '-show_entries',
-            'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', vertical_path
-        ]
-        duration = float(subprocess.check_output(duration_cmd).decode().strip())
-        random_time = round(random.uniform(1, max(duration - 2, 1)), 2)
+            # call the new uploader
+            upload_to_youtube(
+                vertical,
+                meta["title"],
+                meta["description"],
+                meta.get("tags", []),
+                thumbnail_path=None,
+                channel=folder,
+                token_path=None,
+                scopes=args.scopes,
+                client_secrets=args.client_secrets
+            )
 
-        thumbnail_path = os.path.join(args.video_dir, f"thumbnails/thumbnail_{idx}.jpg")
-        os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
-        subprocess.run([
-            "ffmpeg", "-y", "-ss", str(random_time), "-i", vertical_path,
-            "-vframes", "1", "-q:v", "2", thumbnail_path
-        ], check=True)
+            uploaded.add(idx)
+            save_uploaded_indices(uploaded_json, uploaded)
+            print(f"  uploaded and recorded {idx}")
 
-        meta_path = os.path.join(args.video_dir, f"{idx}_short_metadata.json")
-        with open(meta_path, "r") as mf:
-            metadata = json.load(mf)
-            title = metadata["title"]
-            description = metadata["description"]
-            tags = metadata.get("tags", [])
-            category = metadata.get("category", "24")
-
-        # Upload video with title and description metadata
-        upload_to_youtube(vertical_path, title, description, tags)
-
-        # Update uploaded indices
-        uploaded_indices.add(idx)
-        print('saving')
-        print(uploaded_indices)
-        print(idx)
-        save_uploaded_indices(uploaded_json_path, uploaded_indices)
-        print('saved')
-        # Wait for a random interval between uploads (30 mins to 2 hours)
-        wait_time = random.randint(7200, 14000)
-        print(f"Waiting for {wait_time // 60} minutes before next upload...")
-        time.sleep(wait_time)
+            wait_sec = random.randint(7200, 14000)
+            print(f"  sleeping for {wait_sec//60}m")
+            time.sleep(wait_sec)
 
 if __name__ == "__main__":
     main()

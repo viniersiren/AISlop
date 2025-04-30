@@ -8,6 +8,7 @@ import sys
 import gc
 import re
 import time
+import argparse
 
 from fastCuts import create_fast_cuts
 from transcribeAndCaption import add_captions, transcribe_audio
@@ -36,9 +37,9 @@ import tempfile
 # CONFIGURATION
 #Fury(2014).mp4
 #vietVet1.mp4
-MOVIE_FILE = "Fury(2014).mp4"  # Change this to your movie/show file
-MIN_CLIP_LENGTH = 5  # Minimum clip length in seconds
-MAX_CLIP_LENGTH = 10  # Maximum clip length in seconds
+MOVIE_FILE = "./TwiceAgainInput/thenightmarkets4e4.mp4"  # Change this to your movie/show file
+MIN_CLIP_LENGTH = 25  # Minimum clip length in seconds
+MAX_CLIP_LENGTH = 65  # Maximum clip length in seconds
 CURSE_WORDS = ["fuck", "shit", "damn", "bitch", "ass", "hell"]
 BLEEP_FILE = "bleep.mp3"  # Add bleep sound file
 CURSE_PROBABILITY = 0.05  # 5% chance
@@ -49,6 +50,29 @@ MUSIC_VOLUME = 0.2  # Adjust background music volume (0.0 - 1.0)
 VOSK_MODEL_PATH = "models/vosk-model-en-us-0.22"
 OUTPUT_FOLDER = "clips/"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+MASS_MODE = False
+if '3' in sys.argv:
+    sys.argv.remove('3')
+    MASS_MODE = True
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--input", dest="movie_file", help="Path to source video")
+parser.add_argument("--output", dest="output_folder", help="Directory to save clips")
+args = parser.parse_args()
+
+if args.movie_file:
+    MOVIE_FILE = args.movie_file
+if args.output_folder:
+    OUTPUT_FOLDER = args.output_folder
+
+# Ensure output folder exists
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# CONFIGURATION
+MOVIE_FILE = MOVIE_FILE  # e.g. "./TwiceAgainInput/thenightmarkets4e4.mp4"
+MIN_CLIP_LENGTH = 25
 
 # Ensure output folder exists
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -177,7 +201,7 @@ def get_unique_filename(base_filename):
 def try_generate_metadata(captions, movie_file, max_retries=5):
     for attempt in range(max_retries):
         try:
-            short_metadata = generate_youtube_metadata(captions, movie_file[:-4])
+            short_metadata = generate_youtube_metadata(captions, movie_file[:-4], metadata_dir=OUTPUT_FOLDER)
             if short_metadata:  # check for valid output (adjust as needed)
                 return short_metadata
         except Exception as e:
@@ -204,9 +228,12 @@ def cleanup_clip(clip):
         gc.collect()
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == '3':
+    if MASS_MODE: #len(sys.argv) > 1 and sys.argv[1] == '3':
         # Mass production mode
-        mass_folder = os.path.join(OUTPUT_FOLDER, "mass_produced")
+        #mass_folder = os.path.join(OUTPUT_FOLDER, "./TwiceAgainInput/thenightmarket")
+        print('called mass production')
+        input_basename = os.path.splitext(os.path.basename(MOVIE_FILE))[0]
+        mass_folder = os.path.join(OUTPUT_FOLDER, input_basename)
         os.makedirs(mass_folder, exist_ok=True)
         print('MASS PRODUCING')
         # Get source duration
@@ -225,7 +252,7 @@ if __name__ == "__main__":
             start_time = sum(VideoFileClip(os.path.join(mass_folder, f"{i}.mp4")).duration for i in existing_indices) + 45
         else:
             clip_idx = 1
-            start_time = 45.0
+            start_time = 75.0
         
         while start_time + MIN_CLIP_LENGTH <= end_time:
             # Generate clip
@@ -264,7 +291,7 @@ if __name__ == "__main__":
             print('generating gemini title/description/tags...')
             short_metadata = try_generate_metadata(captions, MOVIE_FILE)
 
-            meta_file = os.path.join(mass_folder, f"{clip_idx}_short_metadata.json", metadata_dir=OUTPUT_FOLDER,)
+            meta_file = os.path.join(mass_folder, f"{clip_idx}_short_metadata.json")
             with open(meta_file, "w") as mf:
                 json.dump(short_metadata, mf, indent=2)
 
@@ -277,7 +304,8 @@ if __name__ == "__main__":
         print(f"Mass produced {clip_idx-1} clips!")
     else:
         # Generate only one clip
-        print('got here')
+        print('processing a single clip')
+        print(sys.argv)
         start_time = random.uniform(0.0, 1200.0)  # Random float between 0.0 and 1200.0 seconds  
     
         # Check if clip_0.mp4 exists, then clip_1.mp4, and so on until we find a unique filename

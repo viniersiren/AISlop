@@ -112,7 +112,26 @@ def ensure_vertical_video(input_path, output_path, target_aspect_ratio=9/16):
     return output_path
 
 
-def upload_to_youtube(video_file, title, description, tags, thumbnail_path, youtube):
+def upload_to_youtube(
+    video_file,
+    title,
+    description,
+    tags,
+    thumbnail_path=None,
+    channel=None,
+    token_path=None,
+    scopes=None,
+    client_secrets=None
+):
+    # Determine token file
+    if token_path is None and channel:
+        token_path = f"token_{channel}.json"
+    scopes = scopes or DEFAULT_SCOPES
+    client_secrets = client_secrets or CLIENT_SECRETS_DEFAULT
+
+    # Build (or rebuild) the YouTube client for this channel
+    youtube = get_authenticated_service(token_path, scopes, client_secrets)
+
     request_body = {
         "snippet": {
             "title": title,
@@ -132,23 +151,26 @@ def upload_to_youtube(video_file, title, description, tags, thumbnail_path, yout
             body=request_body,
             media_body=media_body
         ).execute()
+
         print(f"Successfully uploaded video ID: {response['id']}")
 
         if thumbnail_path and os.path.exists(thumbnail_path):
+            time.sleep(10)
             try:
-                time.sleep(10)
                 youtube.thumbnails().set(
                     videoId=response["id"],
                     media_body=MediaFileUpload(thumbnail_path, mimetype='image/jpeg')
                 ).execute()
                 print("Thumbnail uploaded successfully")
             except Exception as thumbnail_error:
-                print(f"Thumbnail upload failed: {str(thumbnail_error)}")
+                print(f"Thumbnail upload failed: {thumbnail_error}")
 
         return response['id']
+
     except Exception as upload_error:
-        print(f"Upload failed: {str(upload_error)}")
+        print(f"Upload failed: {upload_error}")
         return None
+
 
 
 def upload_to_youtube_single(video_file, metadata_file, youtube):
