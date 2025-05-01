@@ -252,7 +252,7 @@ if __name__ == "__main__":
             start_time = sum(VideoFileClip(os.path.join(mass_folder, f"{i}.mp4")).duration for i in existing_indices) + 45
         else:
             clip_idx = 1
-            start_time = 75.0
+            start_time = 0.0
         
         while start_time + MIN_CLIP_LENGTH <= end_time:
             # Generate clip

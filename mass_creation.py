@@ -31,6 +31,21 @@ def save_processed(record_path, entries):
         for e in entries:
             f.write(e + '\n')
 
+def process_video(in_path, out_folder):
+    cmd = [
+        sys.executable, 'clipCreation.py', '3',
+        '--input', in_path,
+        '--output', out_folder
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error processing {in_path}: {e}")
+        return False
+    except KeyboardInterrupt:
+        print(f"Processing of {in_path} was canceled.")
+        return False
 
 def main():
     # Ensure output root exists
@@ -40,7 +55,6 @@ def main():
     for inp in folders:
         rec_file = os.path.join(inp, RECORD_FILENAME)
         processed = load_processed(rec_file)
-        # Look for media files to process in the input folder
         candidates = [f for f in os.listdir(inp) if f.lower().endswith('.mp4')]
         to_run = [f for f in candidates if f not in processed]
         if not to_run:
@@ -53,23 +67,13 @@ def main():
         new_processed = []
         for fname in to_run:
             in_path = os.path.join(inp, fname)
-            # Call clipCreation.py, passing input and output
-            cmd = [
-                sys.executable, 'clipCreation.py', '3',
-                '--input', in_path,
-                '--output', out_folder
-            ]
-            print(f"Processing {in_path}...")
-            try:
-                subprocess.run(cmd, check=True)
+            if process_video(in_path, out_folder):
                 new_processed.append(fname)
-            except subprocess.CalledProcessError as e:
-                print(f"Error processing {fname}: {e}")
+                os.remove(in_path)  # Delete the original video file after successful processing
 
         if new_processed:
             save_processed(rec_file, new_processed)
             print(f"Recorded {len(new_processed)} entries in {rec_file}")
-
 
 if __name__ == '__main__':
     main()

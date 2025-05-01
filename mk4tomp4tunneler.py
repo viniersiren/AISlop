@@ -22,8 +22,13 @@ def remux_mkv_to_mp4(path):
     print(f"Remuxing: {path} → {mp4_path}")
     try:
         subprocess.run(cmd, check=True)
+        print(f"Successfully remuxed: {path}")
+        os.remove(path)  # Delete the original MKV file
+        print(f"Deleted original MKV file: {path}")
     except subprocess.CalledProcessError as e:
         print(f"Error remuxing {path}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
 
 def find_and_remux(base_dir, max_depth=3):
     """

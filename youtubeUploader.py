@@ -60,7 +60,7 @@ def authorize(token_path, scopes, client_secrets):
     print('authorizing')
     flow = InstalledAppFlow.from_client_secrets_file(client_secrets, scopes)
     creds = flow.run_local_server(
-        port=0,
+        port=9128,
         access_type="offline",
         prompt="consent"
     )

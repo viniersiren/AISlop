@@ -61,8 +61,8 @@ def generate_youtube_metadata(
         "contents": [{"parts": [{"text": prompt}]}]
     }
     headers = {"Content-Type": "application/json"}
-    print("PROMPT BEING SENT TO GEMINI:\n", prompt)
-    print("CHAR LENGTH:", len(prompt))
+    # print("PROMPT BEING SENT TO GEMINI:\n", prompt)
+    # print("CHAR LENGTH:", len(prompt))
 
     resp = requests.post(GEMINI_URL, headers=headers, json=payload)
     resp.raise_for_status()
