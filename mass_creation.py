@@ -60,7 +60,7 @@ def main():
         if not to_run:
             print(f"No new files in {inp}")
             continue
-
+        print('ddd')
         out_folder = os.path.join(OUTPUT_ROOT, os.path.basename(inp))
         os.makedirs(out_folder, exist_ok=True)
 

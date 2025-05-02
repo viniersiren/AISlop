@@ -121,7 +121,8 @@ def extract_clip(movie_file, output_file, start_time=None):  # Modified to accep
     ]
     
     try:
-        subprocess.run(cmd, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        #subprocess.run(cmd, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        subprocess.run(cmd, check=True)
         print(f"Clip extracted: {output_file}")
     except subprocess.CalledProcessError as e:
         print(f"FFmpeg failed: {e.stderr.decode()}")
@@ -243,7 +244,7 @@ if __name__ == "__main__":
             'default=noprint_wrappers=1:nokey=1', MOVIE_FILE
         ]
         duration = float(subprocess.check_output(probe_cmd))
-        end_time = duration - 120  # Last 2 minutes
+        end_time = duration - 30  # Last 2 minutes
         
         existing_clips = [f for f in os.listdir(mass_folder) if re.fullmatch(r"\d+\.mp4", f)]
         existing_indices = sorted([int(re.match(r"(\d+)", f).group()) for f in existing_clips])

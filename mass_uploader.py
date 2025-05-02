@@ -101,7 +101,7 @@ def main():
         save_uploaded_indices(uploaded_json, uploaded)
         print(f"  uploaded and recorded {compound_key}")
 
-        wait_sec = random.randint(7200, 14000)
+        wait_sec = random.randint(18000, 30000)
         print(f"  sleeping for {wait_sec // 60}m")
         time.sleep(wait_sec)
 
