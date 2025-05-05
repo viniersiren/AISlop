@@ -103,7 +103,10 @@ def transcribe_audio(video_file):
     return " ".join(captions), timings
 
 def add_captions(video, captions, timings):
-    # Debug: Print input parameters
+    """
+    Add captions to video with precise timing for each word.
+    Words are grouped into sections when there's a gap >0.5s between them.
+    """
     print(f"Adding captions to video. Captions count: {len(captions.split())}, Timings count: {len(timings)}")
     
     if isinstance(video, str):
@@ -113,231 +116,172 @@ def add_captions(video, captions, timings):
     width, height = video.size
     print(f"Video dimensions: {width}x{height}, Duration: {video.duration}s")
 
-    clips = [video]
+    clips = [video.copy()]
 
     ORIG_H = 808
     ORIG_OFFSET = 350
-
-    # compute a scaled offset
     offset_px = ORIG_OFFSET * height / ORIG_H
     y_base = height - int(offset_px)
-    #y_base = height - 350  # Starting Y position for captions
-    #print(y_base)
-    y_increment = 0  # Vertical space between sections
     current_y = y_base
+
     current_section = []
     current_timings = []
+    words = captions.split()
 
-    # Group words into sections of 3-5 words
-    for i, (word, (start, end)) in enumerate(zip(captions.split(), timings)):
+    # Group words into sections
+    for i, (word, timing) in enumerate(zip(words, timings)):
+        if timing[1] <= timing[0]:  # Skip invalid timings
+            continue
+            
         current_section.append(word)
-        current_timings.append((start, end))
+        current_timings.append(timing)
         
-        # Start new section when we reach 3 words or find natural break
-        if len(current_section) >= 3 or (word.endswith('.') or word.endswith(',')):
-            print('decided to start a new section')
-            create_section(clips, current_section, current_timings, current_y, width)
-            current_y -= y_increment
-            current_section = []
-            current_timings = []
+        # Break section if next word starts >0.5s after this one ends
+        if i < len(words) - 1:
+            next_start = timings[i+1][0]
+            if next_start - timing[1] > 0.5:
+                create_section(clips, current_section, current_timings, current_y, width)
+                current_section = []
+                current_timings = []
 
-    # Add remaining words in final section
+    # Add final section
     if current_section:
         create_section(clips, current_section, current_timings, current_y, width)
 
-    print(f"Created {len(clips)-1} text sections")  # Subtract base video
-    
+    print(f"Created {len(clips)-1} text sections")
+
     try:
-        final_clip = CompositeVideoClip(clips)
+        final = CompositeVideoClip(clips)
+        if video.audio is not None:
+            final = final.with_audio(video.audio)
         print("Successfully composed video with caption sections")
-        return final_clip
+        return final
     except Exception as e:
-        print(f"Error composing video: {str(e)}")
+        print(f"Error composing video: {e}")
+        traceback.print_exc()
         return video
 
 BOUNCE_FREQUENCY = 10   # Add these constants at the top of your file
 RISE_HEIGHT = 5      # how many pixels the word will rise
-RISE_DURATION = 0.3     # seconds over which the rise happens
+RISE_DURATION = 0.01     # seconds over which the rise happens
 
 def create_section(clips, words, timings, y_pos, screen_width):
-    """Create a non-overlapping section of words with bold italic font,
-    temporary rise effect, glow, shadow, and color accents, keeping before/after clips."""
+    """
+    Create a section of words with precise timing for each word's appearance and bounce animation.
+    Each word has exactly three states:
+    1. Normal position (before and after spoken)
+    2. Bounced position (during spoken)
+    3. Shadow for each state
+    """
     try:
-        # Constants for animation
-        RISE_HEIGHT = 17      # pixels to rise
-        #FONT_PATH = "./premadeTest/shortfarm/fonts/font.ttf"
         FONT_PATH = "Raleway-BoldItalic.ttf"
         font_size = int(screen_width * 0.05)
         PADDING = 20
-        max_w = int(screen_width * 0.8)
+        MAX_W = screen_width * 0.8
+        RISE_HEIGHT = 17
 
-        # Filter out bleeps
-        section = [(w, t) for w, t in zip(words, timings) if w != "[BLEEP]"]
+        # Filter out bleeps and invalid timings
+        section = [(w, t) for w, t in zip(words, timings) if w != "[BLEEP]" and t[1] > t[0]]
         if not section:
             return
+
         texts, times = zip(*section)
         section_start = times[0][0]
         section_end = times[-1][1]
 
-        # Build TextClips to measure widths
+        # Build TextClips
         clips_info = []
-        for word in texts:
-            color = "yellow" if len(word) > 5 else "white"
+        for w, (start, end) in zip(texts, times):
             txt = TextClip(
-                text=word,
+                text=w,
                 font=FONT_PATH,
                 font_size=font_size,
-                color=color,
+                color="yellow" if len(w) > 5 else "white",
                 stroke_color="black",
                 stroke_width=1,
                 margin=(0, 5),
             )
-            clips_info.append(txt)
+            if txt.w > 0:
+                clips_info.append((txt, (start, end)))
 
-        # Compute centering
-        total_w = sum(txt.w for txt in clips_info) + PADDING * (len(clips_info) - 1)
-        x_start = (screen_width - total_w) / 2
+        if not clips_info:
+            return
 
-        # Create before/after/glow/rise clips for each word
-        x = x_start
-        for txt, (w_start, w_end) in zip(clips_info, times):
-            # Shadow before spoken
-            shadow_normal = (
-                txt
-                .with_position((x + 2, y_pos + 2))
-                .with_start(section_start)
-                .with_end(w_start)
-                .with_opacity(0.5)
-            )
-            # Shadow after spoken
-            shadow_after = (
-                txt
-                .with_position((x + 2, y_pos + 2))
-                .with_start(w_end)
-                .with_end(section_end)
-                .with_opacity(0.5)
-            )
-            # Regular text before spoken
-            regular_text_before = (
-                txt
-                .with_position((x, y_pos))
-                .with_start(section_start)
-                .with_end(w_start)
-            )
-            # Regular text after spoken
-            regular_text_after = (
-                txt
-                .with_position((x, y_pos))
-                .with_start(w_end)
-                .with_end(section_end)
-            )
-            # Risen shadow during spoken
-            shadow_risen = (
-                txt
-                .with_position((x + 2, y_pos - RISE_HEIGHT + 2))
-                .with_start(w_start)
-                .with_end(w_end)
-                .with_opacity(0.5)
-            )
-            # Glow effect during spoken
-            glow_txt = TextClip(
-                text=txt.text,
-                font=FONT_PATH,
-                font_size=font_size,
-                color=txt.color,
-                stroke_color="black",
-                stroke_width=1,
-                margin=(0, 5),
-            ).resized(1.05)
-            glow = (
-                glow_txt
-                .with_position((x, y_pos - RISE_HEIGHT))
-                .with_start(w_start)
-                .with_end(w_end)
-                .with_opacity(0.3)
-            )
-            # Risen text during spoken
-            risen_text = (
-                txt
-                .with_position((x, y_pos - RISE_HEIGHT))
-                .with_start(w_start)
-                .with_end(w_end)
-            )
+        # Calculate total width and center position
+        total_w = sum(t[0].w for t in clips_info) + PADDING * (len(clips_info) - 1)
+        if total_w > MAX_W:
+            mid = len(clips_info) // 2
+            create_section(clips, words[:mid], timings[:mid], y_pos, screen_width)
+            create_section(clips, words[mid:], timings[mid:], y_pos, screen_width)
+            return
 
-            clips.extend([
-                shadow_normal,
-                shadow_after,
-                regular_text_before,
-                regular_text_after,
-                shadow_risen,
-                glow,
-                risen_text,
+        x = (screen_width - total_w) / 2
+
+        # Create clips for each word
+        for txt, (w_start, w_end) in clips_info:
+            x0 = max(0, int(x))
+            x1 = min(screen_width, int(x + txt.w))
+            if x1 <= x0:
+                x += txt.w + PADDING
+                continue
+
+            # Create the three states for each word
+            word_clips = []
+
+            # 1. Normal position (before spoken)
+            word_clips.extend([
+                # Shadow
+                txt.with_position((x0+2, y_pos+2))
+                   .with_start(section_start)
+                   .with_end(w_start)
+                   .with_opacity(0.5),
+                # Text
+                txt.with_position((x0, y_pos))
+                   .with_start(section_start)
+                   .with_end(w_start)
             ])
+
+            # 2. Bounced position (during spoken)
+            word_clips.extend([
+                # Shadow
+                txt.with_position((x0+2, y_pos-RISE_HEIGHT+2))
+                   .with_start(w_start)
+                   .with_end(w_end)
+                   .with_opacity(0.5),
+                # Glow
+                TextClip(text=txt.text, font=FONT_PATH, font_size=font_size,
+                        color=txt.color, stroke_color="black", stroke_width=1,
+                        margin=(0, 5))
+                   .resized(1.05)
+                   .with_position((x0, y_pos-RISE_HEIGHT))
+                   .with_start(w_start)
+                   .with_end(w_end)
+                   .with_opacity(0.3),
+                # Text
+                txt.with_position((x0, y_pos-RISE_HEIGHT))
+                   .with_start(w_start)
+                   .with_end(w_end)
+            ])
+
+            # 3. Normal position (after spoken)
+            word_clips.extend([
+                # Shadow
+                txt.with_position((x0+2, y_pos+2))
+                   .with_start(w_end)
+                   .with_end(section_end)
+                   .with_opacity(0.5),
+                # Text
+                txt.with_position((x0, y_pos))
+                   .with_start(w_end)
+                   .with_end(section_end)
+            ])
+
+            clips.extend(word_clips)
             x += txt.w + PADDING
 
     except Exception as e:
         print(f"Error creating section: {e}")
-
-    
-    except Exception as e:
-        print(f"Error creating section: {e}")
-
-
-        # glow = (txt
-        #         .with_effects([(color, {"factor": 1.6})])
-        #         .resize(1.03)  # slightly enlarges the clip for a glow bleed
-        #         .with_opacity(0.2))
-
-        # Create a shadow layer: lower opacity and offset its position.
-    #     shadow = txt.with_effect.with_opacity(0.4).with_position(("center", y_pos + 3)) 
-
-        #txt = vfx.Rotate(lambda t: 5 * np.sin(t), txt)
-
-    #     txt_group = CompositeVideoClip([glow, shadow, r]) #meant to have glow as the first arg
-
-    #    # txt_group = txt_group.rotate(lambda t: 5 * np.sin(t))
-
-
-        # Boost contrast
-        #txt = vfx.colorx(txt, 1.3)
-
-        # Apply quick fade in and fade out effects
-        #txt = txt.fadein(0.3)
-        #txt = txt.fadeout(0.3)
-
-        # Set dynamic position with a subtle vertical bounce
-        # txt = txt.set_position(lambda t: (
-        #     "center", 
-        #     y_pos
-        # ))
-       
-        
-def main():
-    input_video = "output.mp4"
-    output_video = "output_with_bounce.mp4"
-    
-    # Process first 30 seconds
-    video = VideoFileClip(input_video).subclip(0, 30)
-    
-    # Transcribe audio
-    transcript, timings = transcribe_audio(input_video)
-    print(f"Transcript: {transcript}")
-    
-    # Add animated captions
-    final_clip = add_captions(video, transcript, timings)
-    
-    # Preserve original audio
-    final_clip.audio = video.audio
-    
-    # Write result
-    final_clip.write_videofile(
-        output_video,
-        codec="libx264",
-        audio_codec="aac",
-        threads=4,
-        preset='fast',
-        ffmpeg_params=['-crf', '23']
-    )
+        traceback.print_exc()
 
 def main():
     input_video = "output.mp4"
@@ -378,6 +322,7 @@ def main():
     # Write result
     final_clip.write_videofile(
         output_video,
+        fps=24,
         codec="libx264",
         audio_codec="aac",
         threads=4,
@@ -385,5 +330,77 @@ def main():
         ffmpeg_params=['-crf', '23']
     )
 
+def load_transcript_json(json_path):
+    """Load transcript data from JSON file."""
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading transcript JSON: {e}")
+        return None
+
+def process_video_with_captions(video_path, json_path, output_path, duration=20):
+    """Process video with captions from JSON or fallback to Vosk."""
+    try:
+        # Create clip with audio
+        video = VideoFileClip(video_path).subclipped(0, duration)
+        
+        # Try to load transcript from JSON
+        transcript_data = load_transcript_json(json_path)
+        if transcript_data and transcript_data.get('timings'):
+            print("Using captions from JSON file")
+            transcript = transcript_data['transcript']
+            timings = transcript_data['timings']
+            
+            # Filter timings for first 20 seconds
+            filtered_timings = []
+            filtered_words = []
+            for i, (word, timing) in enumerate(zip(transcript.split(), timings)):
+                if timing[0] < duration:
+                    filtered_words.append(word)
+                    filtered_timings.append(timing)
+            
+            if filtered_timings:
+                transcript = " ".join(filtered_words)
+                timings = filtered_timings
+            else:
+                print("No captions found in first 20 seconds, falling back to Vosk")
+                transcript, timings = transcribe_audio(video_path)
+        else:
+            print("No valid transcript data found, falling back to Vosk")
+            transcript, timings = transcribe_audio(video_path)
+        
+        # Add captions to video
+        final_clip = add_captions(video, transcript, timings)
+        
+        # Ensure audio is properly set
+        if video.audio is not None:
+            final_clip = final_clip.with_audio(video.audio)
+        
+        # Write result with explicit audio settings
+        final_clip.write_videofile(
+            output_path,
+            codec="libx264",
+            audio_codec="aac",
+            threads=4,
+            preset='fast',
+            ffmpeg_params=['-crf', '23'],
+            audio=True  # Explicitly enable audio
+        )
+        
+        # Cleanup
+        video.close()
+        final_clip.close()
+        
+        return True
+    except Exception as e:
+        print(f"Error processing video: {e}")
+        traceback.print_exc()  # Print full error traceback
+        return False
+
 if __name__ == "__main__":
-    main()
+    # Example usage
+    video_path = "VietnamInput/The_Decisionmaker.mp4"
+    json_path = "VietnamInput/The_Decisionmaker.json"
+    output_path = "VietnamInput/The_Decisionmaker333_captioned.mp4"
+    process_video_with_captions(video_path, json_path, output_path)
