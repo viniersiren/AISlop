@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 import re
+import requests
 
 def verify_captions(video_file):
     """Verify if captions are present in the video file."""
@@ -104,97 +105,155 @@ def sanitize_filename(title):
     return title
 
 def download_video(url, output_dir="VietnamInput"):
-    """Download a video from YouTube and save it to the specified path."""
+    """Download video and extract captions to JSON."""
     try:
-        # Ensure VietnamInput directory exists
+        # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
         # Configure yt-dlp options
         ydl_opts = {
-            'format': 'best[ext=mp4]',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
             'writesubtitles': True,
             'writeautomaticsub': True,
             'subtitleslangs': ['en'],
+            'skip_download': False,
             'postprocessors': [{
                 'key': 'FFmpegVideoConvertor',
                 'preferedformat': 'mp4',
             }],
-            'skip_download': False,
-            'keepvideo': True,
         }
-
-        # First get video info to get the title
+        
+        # Download video and get info
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print(f"Getting video info from {url}...")
-            info = ydl.extract_info(url, download=False)
-            video_title = sanitize_filename(info['title'])
-            output_path = os.path.join(output_dir, f"{video_title}.mp4")
-            ydl_opts['outtmpl'] = output_path
-
-        # Now download the video
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print(f"Downloading video: {video_title}")
-            ydl.extract_info(url, download=True)
-
-        if not os.path.exists(output_path):
-            print(f"Error: Video was not downloaded to {output_path}")
-            return False
-
-        print(f"Video downloaded successfully to {output_path}")
-        print("Checking for captions...")
-
-        # Attempt to extract from VTT
-        words, timings = [], []
-        vtt_path = output_path.rsplit('.', 1)[0] + '.en.vtt'
-        if os.path.exists(vtt_path):
-            print(f"Found VTT file: {vtt_path}")
-            with open(vtt_path, 'r', encoding='utf-8') as f:
-                vtt_content = f.read()
-
-            # Robust VTT parsing
-            blocks = vtt_content.strip().split('\n\n')
-            for block in blocks:
-                lines = [l.strip() for l in block.splitlines() if l.strip()]
-                # look for the timing line
-                timing_lines = [l for l in lines if '-->' in l]
-                if not timing_lines:
-                    continue
-                timing_line = timing_lines[0]
-                parts = timing_line.split(' --> ', 1)
-                if len(parts) != 2:
-                    continue
-                start = parse_vtt_time(parts[0])
-                end   = parse_vtt_time(parts[1])
-                # grab everything except the timing line
-                text = ' '.join(l for l in lines if l != timing_line)
-                word_list = text.split()
-                if not word_list:
-                    continue
-                dur_per_word = (end - start) / len(word_list)
-                for i, w in enumerate(word_list):
-                    ws = round(start + i * dur_per_word, 3)
-                    we = round(ws + dur_per_word, 3)
-                    words.append(w)
-                    timings.append([ws, we])
-
-        if words and timings:
-            print(f"Extracted {len(words)} words from captions")
-            transcript_data = {
-                "transcript": " ".join(words),
-                "timings": timings
-            }
-            transcript_path = os.path.join(output_dir, f"{video_title}.json")
-            with open(transcript_path, "w", encoding="utf-8") as f:
-                json.dump(transcript_data, f, indent=2)
-            print(f"Saved captions to {transcript_path}")
-        else:
-            print("No captions found in the video")
-
-        return True
-
+            info = ydl.extract_info(url, download=True)
+            video_title = info['title']
+            video_path = os.path.join(output_dir, f"{video_title}.mp4")
+            
+            # Get captions if available
+            if 'subtitles' in info or 'automatic_captions' in info:
+                captions = []
+                timings = []
+                
+                # Try to get manual captions first, then automatic
+                if 'subtitles' in info and 'en' in info['subtitles']:
+                    caption_data = info['subtitles']['en']
+                elif 'automatic_captions' in info and 'en' in info['automatic_captions']:
+                    caption_data = info['automatic_captions']['en']
+                else:
+                    print("No English captions found")
+                    return video_path
+                
+                # Process captions
+                for caption in caption_data:
+                    if caption['ext'] == 'vtt':
+                        # Download and parse VTT file
+                        vtt_url = caption['url']
+                        response = requests.get(vtt_url)
+                        vtt_content = response.text
+                        
+                        # Parse VTT content
+                        current_text = []
+                        current_start = None
+                        current_end = None
+                        
+                        for line in vtt_content.split('\n'):
+                            line = line.strip()
+                            
+                            # Skip header and empty lines
+                            if not line or line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:'):
+                                continue
+                                
+                            # Parse timing line
+                            if '-->' in line:
+                                if current_text and current_start is not None and current_end is not None:
+                                    # Process accumulated text
+                                    text = ' '.join(current_text)
+                                    words = text.split()
+                                    word_count = len(words)
+                                    
+                                    if word_count > 0:
+                                        # Calculate duration per word
+                                        duration = current_end - current_start
+                                        word_duration = duration / word_count
+                                        
+                                        # Create timing for each word
+                                        for i, word in enumerate(words):
+                                            word_start = current_start + (i * word_duration)
+                                            word_end = word_start + word_duration
+                                            captions.append(word)
+                                            timings.append((round(word_start, 3), round(word_end, 3)))
+                                    
+                                # Reset for next block
+                                current_text = []
+                                times = line.split(' --> ')
+                                if len(times) == 2:
+                                    current_start = parse_vtt_timestamp(times[0])
+                                    current_end = parse_vtt_timestamp(times[1])
+                            else:
+                                # Accumulate text
+                                current_text.append(line)
+                        
+                        # Process final block
+                        if current_text and current_start is not None and current_end is not None:
+                            text = ' '.join(current_text)
+                            words = text.split()
+                            word_count = len(words)
+                            
+                            if word_count > 0:
+                                duration = current_end - current_start
+                                word_duration = duration / word_count
+                                
+                                for i, word in enumerate(words):
+                                    word_start = current_start + (i * word_duration)
+                                    word_end = word_start + word_duration
+                                    captions.append(word)
+                                    timings.append((round(word_start, 3), round(word_end, 3)))
+                        
+                        break  # Use first VTT format found
+                
+                # Save captions and timings to JSON
+                json_path = os.path.join(output_dir, f"{video_title}.json")
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'transcript': ' '.join(captions),
+                        'timings': timings
+                    }, f, indent=2)
+                
+                print(f"Saved captions to {json_path}")
+                return video_path
+            
+            print("No captions found")
+            return video_path
+            
     except Exception as e:
-        print(f"Error downloading video: {e}")
-        return False
+        print(f"Error downloading video: {str(e)}")
+        return None
+
+def parse_vtt_timestamp(timestamp):
+    """Parse VTT timestamp to seconds."""
+    try:
+        # Extract just the timestamp part if there's additional metadata
+        timestamp = timestamp.split()[0]
+        
+        # Handle different VTT timestamp formats
+        if '.' in timestamp:
+            hours, minutes, seconds = timestamp.split(':')
+            seconds, milliseconds = seconds.split('.')
+        else:
+            hours, minutes, seconds = timestamp.split(':')
+            milliseconds = '000'
+        
+        total_seconds = (
+            int(hours) * 3600 +
+            int(minutes) * 60 +
+            int(seconds) +
+            int(milliseconds) / 1000
+        )
+        return round(total_seconds, 3)
+    except Exception as e:
+        print(f"Error parsing timestamp {timestamp}: {str(e)}")
+        return 0.0
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

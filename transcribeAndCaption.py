@@ -27,8 +27,8 @@ from vosk import Model, KaldiRecognizer
 
 
 def transcribe_audio(video_file):
+    """Transcribe audio using Vosk with accurate word timing."""
     print("TRANSCRIBING")
-
     
     # Check for audio
     probe_cmd = [
@@ -71,6 +71,7 @@ def transcribe_audio(video_file):
 
     captions = []
     timings = []
+    last_end_time = 0.0
 
     while True:
         data = wf.readframes(4000)
@@ -81,24 +82,36 @@ def transcribe_audio(video_file):
             if 'result' in result:
                 for word_info in result['result']:
                     word = word_info['word']
-                    start = word_info['start']
-                    end = word_info['end']
-
-                   
+                    start = round(word_info['start'], 3)
+                    end = round(word_info['end'], 3)
+                    
+                    # Ensure no overlapping timings
+                    if start < last_end_time:
+                        start = last_end_time
+                    if end <= start:
+                        end = start + 0.1  # Minimum duration
+                    
                     captions.append(word)
                     timings.append((start, end))
+                    last_end_time = end
 
     # Process final result
     final_result = json.loads(rec.FinalResult())
     if 'result' in final_result:
         for word_info in final_result['result']:
             word = word_info['word']
-            start = word_info['start']
-            end = word_info['end']
-
-         
+            start = round(word_info['start'], 3)
+            end = round(word_info['end'], 3)
+            
+            # Ensure no overlapping timings
+            if start < last_end_time:
+                start = last_end_time
+            if end <= start:
+                end = start + 0.1  # Minimum duration
+            
             captions.append(word)
             timings.append((start, end))
+            last_end_time = end
 
     return " ".join(captions), timings
 
@@ -339,68 +352,98 @@ def load_transcript_json(json_path):
         print(f"Error loading transcript JSON: {e}")
         return None
 
-def process_video_with_captions(video_path, json_path, output_path, duration=20):
-    """Process video with captions from JSON or fallback to Vosk."""
+def analyze_word_timings(json_path):
+    """Analyze and print timing information for each word."""
     try:
-        # Create clip with audio
-        video = VideoFileClip(video_path).subclipped(0, duration)
+        # Load transcript data
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
         
-        # Try to load transcript from JSON
-        transcript_data = load_transcript_json(json_path)
-        if transcript_data and transcript_data.get('timings'):
-            print("Using captions from JSON file")
-            transcript = transcript_data['transcript']
-            timings = transcript_data['timings']
+        transcript = data['transcript']
+        timings = data['timings']
+        
+        print("\nWord Animation Timing Analysis:")
+        print("=" * 100)
+        print(f"{'Word':<15} {'Appears':<10} {'Bounce Start':<12} {'Bounce End':<12} {'Disappears':<12} {'Duration':<10}")
+        print("-" * 100)
+        
+        words = transcript.split()
+        for i, (word, timing) in enumerate(zip(words, timings)):
+            start, end = timing
+            duration = end - start
             
-            # Filter timings for first 20 seconds
-            filtered_timings = []
-            filtered_words = []
-            for i, (word, timing) in enumerate(zip(transcript.split(), timings)):
-                if timing[0] < duration:
-                    filtered_words.append(word)
-                    filtered_timings.append(timing)
+            # Print timing information for each word
+            print(f"{word:<15} {start:<10.3f} {start:<12.3f} {end:<12.3f} {end:<12.3f} {duration:<10.3f}")
             
-            if filtered_timings:
-                transcript = " ".join(filtered_words)
-                timings = filtered_timings
-            else:
-                print("No captions found in first 20 seconds, falling back to Vosk")
-                transcript, timings = transcribe_audio(video_path)
-        else:
-            print("No valid transcript data found, falling back to Vosk")
-            transcript, timings = transcribe_audio(video_path)
+            # Add separator between words
+            if i < len(words) - 1:
+                next_start = timings[i + 1][0]
+                gap = next_start - end
+                if gap > 0.5:
+                    print("-" * 100)
+                    print(f"Section Break: {gap:.3f}s gap")
+                    print("-" * 100)
+        
+        # Print summary
+        print("\nSummary:")
+        print(f"Total words: {len(words)}")
+        print(f"Total duration: {timings[-1][1] - timings[0][0]:.3f} seconds")
+        print(f"Average word duration: {sum(end - start for start, end in timings) / len(timings):.3f} seconds")
+        
+    except Exception as e:
+        print(f"Error analyzing timings: {str(e)}")
+
+def process_video_with_captions(input_path, output_path, duration=20):
+    """Process video with captions and create a clip of specified duration."""
+    try:
+        # Load transcript data
+        transcript_path = input_path.replace('.mp4', '.json')
+        with open(transcript_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Print timing analysis before processing
+        print("\nAnalyzing word timings before processing:")
+        analyze_word_timings(transcript_path)
+        
+        # Create video clip
+        video = VideoFileClip(input_path)
+        clip = video.subclipped(0, duration)
+        
+        # Filter transcript and timings to only include words within the clip duration
+        words = data['transcript'].split()
+        timings = data['timings']
+        filtered_words = []
+        filtered_timings = []
+        
+        for word, timing in zip(words, timings):
+            if timing[0] < duration:
+                filtered_words.append(word)
+                filtered_timings.append(timing)
+        
+        # Create captions - pass the filtered words directly without splitting
+        captions = add_captions(clip, " ".join(filtered_words), filtered_timings)
         
         # Add captions to video
-        final_clip = add_captions(video, transcript, timings)
+        final_video = CompositeVideoClip([clip, captions])
         
-        # Ensure audio is properly set
-        if video.audio is not None:
-            final_clip = final_clip.with_audio(video.audio)
+        # Write output
+        final_video.write_videofile(output_path, codec='libx264', audio_codec='aac')
         
-        # Write result with explicit audio settings
-        final_clip.write_videofile(
-            output_path,
-            codec="libx264",
-            audio_codec="aac",
-            threads=4,
-            preset='fast',
-            ffmpeg_params=['-crf', '23'],
-            audio=True  # Explicitly enable audio
-        )
+        # Print timing analysis after processing
+        print("\nAnalyzing word timings after processing:")
+        analyze_word_timings(transcript_path)
         
         # Cleanup
         video.close()
-        final_clip.close()
+        final_video.close()
         
-        return True
     except Exception as e:
-        print(f"Error processing video: {e}")
-        traceback.print_exc()  # Print full error traceback
-        return False
+        print(f"Error processing video: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     # Example usage
-    video_path = "VietnamInput/The_Decisionmaker.mp4"
-    json_path = "VietnamInput/The_Decisionmaker.json"
-    output_path = "VietnamInput/The_Decisionmaker333_captioned.mp4"
-    process_video_with_captions(video_path, json_path, output_path)
+    video_path = "VietnamInput/Wealth Triangle  Are You Rich Enough For Your Age.mp4"
+    json_path = "VietnamInput/Wealth Triangle  Are You Rich Enough for Your Age.json"
+    output_path = "VietnamInput/Wealth Triangle Are You Rich Enough For Your Age333_captioned.mp4"
+    process_video_with_captions(video_path, output_path)
