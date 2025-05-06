@@ -1,3 +1,4 @@
+import re
 import traceback
 import os
 import random
@@ -69,7 +70,7 @@ def transcribe_audio(video_file):
     rec = KaldiRecognizer(model, wf.getframerate())
     rec.SetWords(True)
 
-    captions = []
+    words = []
     timings = []
     last_end_time = 0.0
 
@@ -91,7 +92,7 @@ def transcribe_audio(video_file):
                     if end <= start:
                         end = start + 0.1  # Minimum duration
                     
-                    captions.append(word)
+                    words.append(word)
                     timings.append((start, end))
                     last_end_time = end
 
@@ -109,11 +110,11 @@ def transcribe_audio(video_file):
             if end <= start:
                 end = start + 0.1  # Minimum duration
             
-            captions.append(word)
+            words.append(word)
             timings.append((start, end))
             last_end_time = end
 
-    return " ".join(captions), timings
+    return words, timings
 
 def add_captions(video, captions, timings):
     """
@@ -131,6 +132,8 @@ def add_captions(video, captions, timings):
 
     clips = [video.copy()]
 
+    #shifted = [(start + offset, end + offset) for (start, end) in timings]
+
     ORIG_H = 808
     ORIG_OFFSET = 350
     offset_px = ORIG_OFFSET * height / ORIG_H
@@ -142,24 +145,15 @@ def add_captions(video, captions, timings):
     words = captions.split()
 
     # Group words into sections
-    for i, (word, timing) in enumerate(zip(words, timings)):
-        if timing[1] <= timing[0]:  # Skip invalid timings
-            continue
-            
-        current_section.append(word)
-        current_timings.append(timing)
-        
-        # Break section if next word starts >0.5s after this one ends
-        if i < len(words) - 1:
-            next_start = timings[i+1][0]
-            if next_start - timing[1] > 0.5:
-                create_section(clips, current_section, current_timings, current_y, width)
-                current_section = []
-                current_timings = []
+    i = 0
+    while i < len(words):
+        # Choose a random section size between 3 and 5
+        section_size = random.randint(3, 5)
+        section_words = words[i:i+section_size]
+        section_timings = timings[i:i+section_size]
+        create_section(clips, section_words, section_timings, current_y, width)
+        i += section_size
 
-    # Add final section
-    if current_section:
-        create_section(clips, current_section, current_timings, current_y, width)
 
     print(f"Created {len(clips)-1} text sections")
 
@@ -296,52 +290,6 @@ def create_section(clips, words, timings, y_pos, screen_width):
         print(f"Error creating section: {e}")
         traceback.print_exc()
 
-def main():
-    input_video = "output.mp4"
-    output_video = "output_with_bounce.mp4"
-    transcript_file = "transcript.json"
-    temp_clip_path = "temp_clip_30s.mp4"
-
-    # Cut 30s clip and save it
-    if not os.path.exists(temp_clip_path):
-        print("Saving 30-second preview clip...")
-        video = VideoFileClip(input_video).subclipped(0, 30)
-        video.write_videofile(temp_clip_path, codec="libx264", audio_codec="aac")
-    else:
-        video = VideoFileClip(temp_clip_path)
-
-    # Check if transcript already exists
-    if os.path.exists(transcript_file):
-        with open(transcript_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            transcript = data["transcript"]
-            timings = data["timings"]
-        print("Loaded transcript from file.")
-    else:
-        transcript, timings = transcribe_audio(temp_clip_path)
-        print("Generated new transcript.")
-
-        with open(transcript_file, "w", encoding="utf-8") as f:
-            json.dump({"transcript": transcript, "timings": timings}, f, indent=2)
-
-    print(f"Transcript: {transcript}")
-    
-    # Add animated captions
-    final_clip = add_captions(video, transcript, timings)
-    
-    # Preserve original audio
-    final_clip.audio = video.audio
-    
-    # Write result
-    final_clip.write_videofile(
-        output_video,
-        fps=24,
-        codec="libx264",
-        audio_codec="aac",
-        threads=4,
-        preset='fast',
-        ffmpeg_params=['-crf', '23']
-    )
 
 def load_transcript_json(json_path):
     """Load transcript data from JSON file."""
@@ -352,75 +300,50 @@ def load_transcript_json(json_path):
         print(f"Error loading transcript JSON: {e}")
         return None
 
-def analyze_word_timings(json_path):
-    """Analyze and print timing information for each word."""
-    try:
-        # Load transcript data
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        transcript = data['transcript']
-        timings = data['timings']
-        
-        print("\nWord Animation Timing Analysis:")
-        print("=" * 100)
-        print(f"{'Word':<15} {'Appears':<10} {'Bounce Start':<12} {'Bounce End':<12} {'Disappears':<12} {'Duration':<10}")
-        print("-" * 100)
-        
-        words = transcript.split()
-        for i, (word, timing) in enumerate(zip(words, timings)):
-            start, end = timing
-            duration = end - start
-            
-            # Print timing information for each word
-            print(f"{word:<15} {start:<10.3f} {start:<12.3f} {end:<12.3f} {end:<12.3f} {duration:<10.3f}")
-            
-            # Add separator between words
-            if i < len(words) - 1:
-                next_start = timings[i + 1][0]
-                gap = next_start - end
-                if gap > 0.5:
-                    print("-" * 100)
-                    print(f"Section Break: {gap:.3f}s gap")
-                    print("-" * 100)
-        
-        # Print summary
-        print("\nSummary:")
-        print(f"Total words: {len(words)}")
-        print(f"Total duration: {timings[-1][1] - timings[0][0]:.3f} seconds")
-        print(f"Average word duration: {sum(end - start for start, end in timings) / len(timings):.3f} seconds")
-        
-    except Exception as e:
-        print(f"Error analyzing timings: {str(e)}")
 
-def process_video_with_captions(input_path, output_path, duration=20):
+def process_video_with_captions(input_path, output_path, duration=10):
     """Process video with captions and create a clip of specified duration."""
     try:
         # Load transcript data
         transcript_path = input_path.replace('.mp4', '.json')
-        with open(transcript_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        try:
+            with open(transcript_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                words = data['transcript']
+                timings = data['timings']
+                print("Loaded transcript from JSON file")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Could not load JSON transcript: {e}")
+            print("Falling back to Vosk transcription...")
+            words, timings = transcribe_audio(input_path)
+            print("Completed Vosk transcription")
         
-        # Print timing analysis before processing
-        print("\nAnalyzing word timings before processing:")
-        analyze_word_timings(transcript_path)
-        
+        USE_STATIC_OFFSET = False
+        STATIC_OFFSET = -0.4
+        if not USE_STATIC_OFFSET:
+            dyn_offset = estimate_dynamic_offset(input_path, timings)
+        else:
+            dyn_offset = STATIC_OFFSET
+
+        # Apply offset to all timings
+        adjusted_timings = [
+            (max(0, start + dyn_offset), end + dyn_offset)
+            for start, end in timings
+        ]
         # Create video clip
         video = VideoFileClip(input_path)
         clip = video.subclipped(0, duration)
         
         # Filter transcript and timings to only include words within the clip duration
-        words = data['transcript'].split()
-        timings = data['timings']
         filtered_words = []
         filtered_timings = []
         
-        for word, timing in zip(words, timings):
+        for word, timing in zip(words, adjusted_timings):
             if timing[0] < duration:
                 filtered_words.append(word)
                 filtered_timings.append(timing)
-        
-        # Create captions - pass the filtered words directly without splitting
+
+        # Now pass the filtered, adjusted timings into add_captions
         captions = add_captions(clip, " ".join(filtered_words), filtered_timings)
         
         # Add captions to video
@@ -428,10 +351,6 @@ def process_video_with_captions(input_path, output_path, duration=20):
         
         # Write output
         final_video.write_videofile(output_path, codec='libx264', audio_codec='aac')
-        
-        # Print timing analysis after processing
-        print("\nAnalyzing word timings after processing:")
-        analyze_word_timings(transcript_path)
         
         # Cleanup
         video.close()
@@ -441,9 +360,56 @@ def process_video_with_captions(input_path, output_path, duration=20):
         print(f"Error processing video: {str(e)}")
         raise
 
+def estimate_dynamic_offset(video_file, transcript_timings, vosk_model_path=VOSK_MODEL_PATH):
+    """
+    Compute a dynamic offset by comparing the first word
+    timestamp from the existing transcript_timings vs.
+    VOSK's own detection on the video audio.
+    """
+    # 1) Extract audio to WAV
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        ffmpeg_cmd = [
+            'ffmpeg','-y','-i', video_file,
+            '-vn','-acodec','pcm_s16le','-ar','16000','-ac','1', tmp.name
+        ]
+        subprocess.run(ffmpeg_cmd, check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        wav_path = tmp.name
+
+    # 2) Run VOSK recognizer
+    wf = wave.open(wav_path, 'rb')
+    os.unlink(wav_path)
+    model = Model(vosk_model_path)
+    rec = KaldiRecognizer(model, wf.getframerate())
+    rec.SetWords(True)
+
+    first_vosk_start = None
+    while True:
+        data = wf.readframes(4000)
+        if not data:
+            break
+        if rec.AcceptWaveform(data):
+            res = json.loads(rec.Result())
+            if 'result' in res and res['result']:
+                first_vosk_start = round(res['result'][0]['start'], 3)
+                break
+    if first_vosk_start is None:
+        # Fall back to final chunk if nothing yet
+        final = json.loads(rec.FinalResult())
+        if 'result' in final and final['result']:
+            first_vosk_start = round(final['result'][0]['start'], 3)
+
+    # 3) Compare to your transcript_timings[0][0]
+    if first_vosk_start is not None and transcript_timings:
+        original_start = transcript_timings[0][0]
+        print(first_vosk_start)
+        return first_vosk_start - original_start
+
+    return 0.0
+
 if __name__ == "__main__":
     # Example usage
-    video_path = "VietnamInput/Wealth Triangle  Are You Rich Enough For Your Age.mp4"
-    json_path = "VietnamInput/Wealth Triangle  Are You Rich Enough for Your Age.json"
-    output_path = "VietnamInput/Wealth Triangle Are You Rich Enough For Your Age333_captioned.mp4"
+    video_path = "VietnamInput/This dude is a real one for standing up to Kick Streamer Vitaly for disrespecting Filipinos 🇵🇭.mp4"
+    json_path = "VietnamInput/This dude is a real one for standing up to Kick Streamer Vitaly for disrespecting Filipinos 🇵🇭.json"
+    output_path = "VietnamInput/This dude is a real one for standing up to Kick Streamer Vitaly for disrespecting Filipinos 🇵🇭333_captioned.mp4"
     process_video_with_captions(video_path, output_path)

@@ -2,29 +2,79 @@
 import os
 import subprocess
 import sys
+import json
+
+def get_media_info(path):
+    """Get detailed information about the media file including available streams."""
+    cmd = [
+        'ffprobe',
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        '-show_streams',
+        path
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)
+    except subprocess.CalledProcessError as e:
+        print(f"Error getting media info for {path}: {e}", file=sys.stderr)
+        return None
+
+def print_caption_info(media_info):
+    """Print information about available caption tracks."""
+    if not media_info:
+        return
+    
+    caption_streams = [s for s in media_info.get('streams', []) 
+                      if s.get('codec_type') == 'subtitle']
+    
+    if not caption_streams:
+        print("No caption tracks found in the file.")
+        return
+    
+    print("\nAvailable Caption Tracks:")
+    for i, stream in enumerate(caption_streams, 1):
+        codec = stream.get('codec_name', 'unknown')
+        lang = stream.get('tags', {}).get('language', 'unknown')
+        title = stream.get('tags', {}).get('title', '')
+        print(f"{i}. Format: {codec.upper()}, Language: {lang}, Title: {title}")
 
 def remux_mkv_to_mp4(path):
     """
-    Losslessly remux an MKV into MP4 by copying only video & audio streams,
-    dropping subtitles to avoid unsupported-codec errors.
+    Remux an MKV into MP4 with high quality settings and caption detection.
     """
     base, _ = os.path.splitext(path)
     mp4_path = f"{base}.mp4"
+    
+    # Get media info and print caption information
+    print(f"\nAnalyzing: {path}")
+    media_info = get_media_info(path)
+    print_caption_info(media_info)
+    
+    # Build ffmpeg command with high quality settings
     cmd = [
         'ffmpeg',
         '-i', path,
         '-map', '0:v',        # map all video streams
         '-map', '0:a',        # map all audio streams
-        '-c', 'copy',         # copy codecs without re-encoding
-        '-sn',                # disable subtitle streams
+        '-map', '0:s?',       # map all subtitle streams if they exist
+        '-c:v', 'copy',       # copy video codec without re-encoding
+        '-c:a', 'aac',        # convert audio to AAC
+        '-c:s', 'mov_text',   # convert subtitles to MP4-compatible format
+        '-b:a', '384k',       # high audio bitrate
+        '-movflags', '+faststart',  # enable fast start for web playback
+        '-preset', 'medium',   # encoding preset (slower = better quality)
+        '-crf', '18',         # constant rate factor (lower = better quality, 18 is visually lossless)
         mp4_path
     ]
-    print(f"Remuxing: {path} → {mp4_path}")
+    
+    print(f"\nRemuxing: {path} → {mp4_path}")
     try:
         subprocess.run(cmd, check=True)
         print(f"Successfully remuxed: {path}")
-        os.remove(path)  # Delete the original MKV file
-        print(f"Deleted original MKV file: {path}")
+        #os.remove(path)  # Delete the original MKV file
+        #print(f"Deleted original MKV file: {path}")
     except subprocess.CalledProcessError as e:
         print(f"Error remuxing {path}: {e}", file=sys.stderr)
     except Exception as e:
