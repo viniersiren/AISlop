@@ -7,6 +7,12 @@ from pathlib import Path
 
 # Available voices can be found at: https://learn.microsoft.com/en-us/azure/cognitive-services/speech-service/language-support?tabs=tts
 VOICE = "en-US-GuyNeural"  # Authoritative male voice
+# Voice settings for a more grand, natural sound
+VOICE_SETTINGS = {
+    "rate": "-10%",     # Slightly slower for more gravitas
+    "volume": "+20%",   # Louder for more presence
+    "pitch": "+2Hz"     # Slightly higher pitch for more natural intonation
+}
 OUTPUT_DIR = "generated_audio"
 
 async def generate_audio(text_file: str, output_file: str = None) -> str:
@@ -38,18 +44,27 @@ async def generate_audio(text_file: str, output_file: str = None) -> str:
         
         print(f"Generating audio for: {text_file}")
         print(f"Using voice: {VOICE}")
+        print(f"Voice settings: {VOICE_SETTINGS}")
         print(f"Output will be saved to: {output_file}")
         
-        # Initialize the TTS
-        communicate = edge_tts.Communicate(text, VOICE)
+        # Initialize the TTS with custom settings
+        communicate = edge_tts.Communicate(
+            text, 
+            VOICE,
+            rate=VOICE_SETTINGS["rate"],
+            volume=VOICE_SETTINGS["volume"],
+            pitch=VOICE_SETTINGS["pitch"]
+        )
         
         # Get word timing information
         words = []
         timings = []
         
-        async for word in communicate.get_word_boundary_list():
-            words.append(word['text'])
-            timings.append((word['offset'] / 10000000, word['duration'] / 10000000))
+        # Stream the audio and collect word boundaries
+        async for message in communicate.stream():
+            if message["type"] == "WordBoundary":
+                words.append(message["text"])
+                timings.append((message["offset"] / 10000000, message["duration"] / 10000000))
         
         # Generate the audio
         print(f"Generating audio for {len(words)} words...")
